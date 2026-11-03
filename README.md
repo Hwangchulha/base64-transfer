@@ -4,9 +4,10 @@
 
 ## 다운로드
 
-- [안드로이드 테스트 APK 다운로드](dist/base64-transfer-debug.apk?raw=true)
-- [Windows 복원 EXE 다운로드](dist/Base64Restore.exe?raw=true)
-- [PC 복원 프로그램 포함 ZIP 다운로드](dist/base64-transfer.zip?raw=true)
+- [안드로이드 테스트 APK 다운로드](https://github.com/Hwangchulha/base64-transfer/releases/latest/download/base64-transfer-debug.apk)
+- [Windows 복원 EXE 다운로드](https://github.com/Hwangchulha/base64-transfer/releases/latest/download/Base64Restore.exe)
+- [APK·PC 복원 프로그램 전체 ZIP 다운로드](https://github.com/Hwangchulha/base64-transfer/releases/latest/download/base64-transfer.zip)
+- [릴리스 안내](https://github.com/Hwangchulha/base64-transfer/releases/latest)
 
 APK는 Android 8.0 이상용 테스트 서명 버전입니다. Gmail 작성 화면에서 사용자가 직접 전송합니다.
 
