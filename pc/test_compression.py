@@ -70,6 +70,15 @@ class CompressionTests(unittest.TestCase):
         with self.assertRaises(DecodeError):
             Transfer().add(text(dict(obj, extra=1)))
 
+    def test_damage_messages_identify_length_character_and_inflate_stages(self):
+        obj = compressed_envelope(b'a' * 10000)
+        with self.assertRaisesRegex(DecodeError, '문자 수'):
+            Transfer().add(text(dict(obj, data=obj['data'][:-1])))
+        with self.assertRaisesRegex(DecodeError, '문자 또는 끝부분'):
+            Transfer().add(text(dict(obj, data='?' + obj['data'][1:])))
+        with self.assertRaisesRegex(DecodeError, '압축 해제에 실패'):
+            Transfer().add(text(dict(obj, data='㐀' + obj['data'][1:])))
+
     def test_failed_batch_leaves_previous_transfer_unchanged(self):
         good = compressed_envelope(b'a' * 10000)
         tr = Transfer(); tr.add(text(good))

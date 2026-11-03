@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from encoder import encode_file
+from clipboard_io import read_text, write_text, ClipboardError
 
 
 class EncoderWindow:
@@ -33,6 +34,11 @@ class EncoderWindow:
         self.preview = tk.Text(panel, height=6, width=30, wrap='none', state='disabled',
                                bg='#0d1520', fg='#bccddd', font=('Consolas', 10), relief='flat', padx=12, pady=12)
         self.preview.pack(fill='both', expand=True, padx=20)
+        # Text's native copy would export only the shortened/wrapped preview.
+        self.preview.bind('<<Copy>>', self.copy_payload)
+        self.preview.bind('<Control-c>', self.copy_payload)
+        self.preview.bind('<Control-C>', self.copy_payload)
+        self.preview.bind('<Control-Insert>', self.copy_payload)
         actions = tk.Frame(panel, bg='#121b27')
         actions.pack(fill='x', padx=20, pady=16)
         self.copy_button = app.button(actions, '전체 텍스트 복사', self.copy_payload, primary=True)
@@ -115,16 +121,17 @@ class EncoderWindow:
         self.status.set('이전 변환 결과는 비웠습니다. 파일을 다시 선택해주세요.')
         messagebox.showerror('변환 실패', str(exc), parent=self.window)
 
-    def copy_payload(self):
+    def copy_payload(self, event=None):
         if self.closed or self.busy or not self.payload:
-            return
+            return 'break'
         try:
-            self.window.clipboard_clear()
-            self.window.clipboard_append(self.payload)
-            self.window.update_idletasks()
-            self.status.set('전체 텍스트를 복사했어요. 원하는 곳에 붙여넣은 뒤 프로그램을 닫아주세요.')
-        except tk.TclError as exc:
+            write_text(self.window, self.payload)
+            if read_text(self.window) != self.payload:
+                raise tk.TclError('클립보드의 전체 본문이 일치하지 않습니다. 텍스트 파일 저장을 이용해주세요.')
+            self.status.set('전체 텍스트 복사를 확인했어요. 원하는 곳에 붙여넣은 뒤 프로그램을 닫아주세요.')
+        except (tk.TclError, ClipboardError) as exc:
             messagebox.showerror('복사 실패', str(exc), parent=self.window)
+        return 'break'
 
     def save_payload(self):
         if self.closed or self.busy or not self.payload:

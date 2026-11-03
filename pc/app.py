@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from decoder import DecodeError, MAX_TEXT_CHARS, Transfer
 from encode_window import EncoderWindow
+from clipboard_io import read_text, ClipboardError
 
 BG = '#0b1018'
 PANEL = '#121b27'
@@ -27,7 +28,7 @@ class App:
         self.future = None
         self.poll_id = None
         root.protocol('WM_DELETE_WINDOW', self.close)
-        root.title('Text Transfer 1.5 · 인코딩 / 복원')
+        root.title('Text Transfer 1.5.2 · 인코딩 / 복원')
         root.geometry('1040x720')
         root.minsize(900, 650)
         root.configure(bg=BG)
@@ -182,14 +183,18 @@ class App:
         if self.busy or self.closed:
             return 'break'
         try:
-            self.set_input(self.root.clipboard_get())
+            self.set_input(read_text(self.root))
             self.text.focus_set()
-        except (tk.TclError, DecodeError) as exc:
+        except (tk.TclError, DecodeError, ClipboardError) as exc:
             messagebox.showerror('붙여넣기 실패', str(exc), parent=self.root)
         return 'break'
 
     @staticmethod
     def decode_input(candidate, value):
+        # Completed files are independent. Keep only incomplete legacy chunks;
+        # a failed new validation never replaces the active verified transfer.
+        if candidate.total_parts and not candidate.missing:
+            candidate = Transfer()
         candidate.add(value)
         return candidate
 
@@ -295,6 +300,10 @@ class App:
 
 if __name__ == '__main__':
     import sys
+    if sys.platform == 'win32' and len(sys.argv) == 3 and sys.argv[1] == '--self-test-report':
+        import os
+        from windows_test_station import station
+        station('Base64FrozenTest' + str(os.getpid()), True)
     root = tk.Tk()
     application = App(root)
     if len(sys.argv) == 3 and sys.argv[1] == '--self-test-report':
@@ -344,6 +353,24 @@ if __name__ == '__main__':
             restored.add(view.payload)
             assert restored.assemble() == raw
             assert len(view.preview.get('1.0', 'end-1c')) < 400
+            if sys.platform == 'win32':
+                # The process joined a private window station before creating Tk.
+                # Exercise actual clipboard IO in the frozen executable as well.
+                from encoder import encode_bytes
+                import random
+                raw_clip = random.Random(42).randbytes(120000) + b'x' * 20000
+                view.payload = encode_bytes(raw_clip, 'clipboard.bin')
+                view.copy_payload()
+                assert read_text(root) == view.payload
+                application.paste()
+                assert application.input_text == view.payload
+                application.add()
+                deadline = time.monotonic() + 15
+                while application.busy and time.monotonic() < deadline:
+                    root.update()
+                    time.sleep(.005)
+                assert not application.busy
+                assert application.transfer.assemble() == raw_clip
         root.update()
         application.close()
         Path(sys.argv[2]).write_text('PASS: bundled Tk UI and decoder\n', encoding='utf-8')

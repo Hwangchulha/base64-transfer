@@ -80,15 +80,24 @@ def _validate(obj):
             raise DecodeError('Unsupported compression encoding.')
         if type(obj['packedSize']) is not int or not 0 < obj['packedSize'] < size:
             raise DecodeError('Invalid compressed size.')
+        normalized = unicodedata.normalize('NFC', data)
+        symbol_count = (obj['packedSize'] * 8 + 14) // 15
+        if len(normalized) != symbol_count:
+            raise DecodeError(f'압축 본문 문자 수가 다릅니다: 필요 {symbol_count:,}자 / 현재 {len(normalized):,}자. 전체 텍스트를 다시 복사·붙여넣어 주세요.')
         try:
-            packed = decode_compact(unicodedata.normalize('NFC', data), obj['packedSize'])
+            packed = decode_compact(normalized, obj['packedSize'])
+        except ValueError as exc:
+            raise DecodeError('압축 본문의 문자 또는 끝부분이 변경되었습니다. 전체 텍스트를 다시 복사·붙여넣어 주세요.\n' + str(exc)) from exc
+        try:
             inflater = zlib.decompressobj()
             # Never inflate without a bound: even malicious input allocates at most size+1.
             raw = inflater.decompress(packed, size + 1)
-            if len(raw) != size or not inflater.eof or inflater.unused_data or inflater.unconsumed_tail:
-                raise ValueError('Compressed stream length, end marker or trailing data is invalid.')
-        except (ValueError, zlib.error) as exc:
-            raise DecodeError('압축 데이터가 손상되었거나 원본 크기와 맞지 않습니다.') from exc
+        except zlib.error as exc:
+            raise DecodeError('압축 해제에 실패했습니다. 전체 텍스트를 다시 복사·붙여넣어 주세요.\n' + str(exc)) from exc
+        if len(raw) != size:
+            raise DecodeError(f'압축 해제 크기가 다릅니다: 원본 {size:,} / 현재 {len(raw):,}바이트.')
+        if not inflater.eof or inflater.unused_data or inflater.unconsumed_tail:
+            raise DecodeError('압축 본문이 끝까지 전달되지 않았거나 뒤에 다른 데이터가 붙었습니다.')
     elif obj['format'] == 'text-transfer-v3':
         try:
             raw = decode_compact(unicodedata.normalize('NFC', data), expected)

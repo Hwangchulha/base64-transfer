@@ -51,16 +51,28 @@ class EncodeGuiTests(unittest.TestCase):
         transfer = Transfer(); transfer.add(self.view.payload)
         self.assertEqual(transfer.assemble(), self.source.read_bytes())
         self.assertLess(len(self.view.preview.get('1.0', 'end-1c')), 400)
-        with patch.object(self.view.window, 'clipboard_clear') as clear, patch.object(self.view.window, 'clipboard_append') as append:
+        with patch('encode_window.write_text') as write, patch('encode_window.read_text', return_value=self.view.payload):
             self.view.copy_payload()
-            clear.assert_called_once()
-            append.assert_called_once_with(self.view.payload)
+            write.assert_called_once_with(self.view.window, self.view.payload)
         destination = Path(self.temp.name) / 'encoded.txt'
         with patch('encode_window.filedialog.asksaveasfilename', return_value=str(destination)):
             self.view.save_payload()
             self.assertEqual(destination.read_text(encoding='utf-8'), self.view.payload)
             self.view.save_payload()  # Existing files must never be overwritten.
         self.assertEqual(len(self.errors), 1)
+
+    def test_preview_copy_exports_full_payload_and_checks_readback(self):
+        self.view.start(self.source); self.drain()
+        self.assertGreater(len(self.view.payload), 256)
+        copied = []
+        with patch('encode_window.write_text', side_effect=lambda widget, text: copied.append(text)), patch('encode_window.read_text', side_effect=lambda widget: copied[-1]):
+            self.view.preview.tag_add('sel', '1.0', '1.3')
+            self.view.preview.event_generate('<<Copy>>')
+            self.root.update()
+        self.assertEqual(copied, [self.view.payload])
+        with patch('encode_window.write_text'), patch('encode_window.read_text', return_value='truncated'):
+            self.view.copy_payload()
+        self.assertTrue(self.errors)
 
     def test_failed_selection_clears_stale_output_and_recovers(self):
         self.view.start(self.source); self.drain()

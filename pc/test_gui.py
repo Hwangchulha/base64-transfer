@@ -46,7 +46,7 @@ class GuiTests(unittest.TestCase):
     def test_full_input_bounded_preview_and_async_decode(self):
         raw = bytes(range(256)) * 4095
         body = envelope(raw)
-        with patch.object(self.root, 'clipboard_get', return_value=body):
+        with patch('app.read_text', return_value=body):
             self.app.paste()
         self.assertEqual(self.app.input_text, body)
         self.assertLess(len(self.app.text.get('1.0', 'end-1c')), 5000)
@@ -59,6 +59,16 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.app.transfer.assemble(), raw)
         self.assertEqual(self.app.input_text, '')
         self.assertEqual(str(self.app.save_button['state']), 'normal')
+        self.assertEqual(self.errors, [])
+
+    def test_new_file_replaces_completed_transfer_only_after_validation(self):
+        from encoder import encode_bytes
+        self.app.set_input(encode_bytes(b'old', 'old.bin'))
+        self.app.add(); self.drain()
+        self.app.set_input(encode_bytes(b'new' * 10000, 'new.bin'))
+        self.app.add(); self.drain()
+        self.assertEqual(self.app.transfer.assemble(), b'new' * 10000)
+        self.assertEqual(self.app.transfer.filename, 'new.bin')
         self.assertEqual(self.errors, [])
 
     def test_bad_new_input_cannot_save_previous_file(self):
