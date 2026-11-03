@@ -1,5 +1,7 @@
 """Offline Base64 receiver: dark desktop interface, explicit clipboard actions."""
 import tkinter as tk
+import copy
+from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from decoder import DecodeError, MAX_TEXT_CHARS, Transfer
 
@@ -16,6 +18,13 @@ FONT = '맑은 고딕'
 class App:
     def __init__(self, root):
         self.root, self.transfer = root, Transfer()
+        self.input_text = ''
+        self.busy = False
+        self.closed = False
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='decode')
+        self.future = None
+        self.poll_id = None
+        root.protocol('WM_DELETE_WINDOW', self.close)
         root.title('Base64 Restore')
         root.geometry('1040x720')
         root.minsize(900, 650)
@@ -57,7 +66,7 @@ class App:
         self.text = tk.Text(wrap, bg=INPUT, fg='#bccddd', insertbackground=ACCENT,
                             selectbackground='#245b60', selectforeground=FG,
                             relief='flat', bd=0, padx=14, pady=14, font=('Consolas', 10),
-                            wrap='char', undo=False, width=30, height=8, highlightthickness=0)
+                            wrap='none', undo=False, width=30, height=8, highlightthickness=0, state='disabled')
         self.text.pack(side='left', fill='both', expand=True)
         scroll = tk.Scrollbar(wrap, command=self.text.yview, bg=LINE, troughcolor=INPUT,
                               activebackground=MUTED, relief='flat', bd=0, width=10)
@@ -69,12 +78,15 @@ class App:
         self.placeholder.bind('<Button-1>', lambda e: self.text.focus_set())
         self.text.bind('<<Paste>>', self.paste)
         self.text.bind('<<PasteSelection>>', self.paste)
-        self.text.bind('<<Modified>>', self.limit_text)
+        root.bind('<Control-v>', self.paste)
+        root.bind('<Control-V>', self.paste)
         self.text.bind('<Control-Return>', lambda e: self.add())
         controls = tk.Frame(editor, bg=PANEL)
         controls.pack(fill='x', padx=20, pady=16)
-        self.button(controls, '클립보드 붙여넣기', self.paste).pack(side='left')
-        self.button(controls, '텍스트 확인  →', self.add, primary=True).pack(side='right')
+        self.paste_button = self.button(controls, '클립보드 붙여넣기', self.paste)
+        self.paste_button.pack(side='left')
+        self.add_button = self.button(controls, '텍스트 확인  →', self.add, primary=True)
+        self.add_button.pack(side='right')
         side = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1, width=290)
         side.grid(row=0, column=1, sticky='nsew')
         side.grid_propagate(False)
@@ -103,7 +115,8 @@ class App:
         self.status = tk.StringVar(value='준비 완료 · 받은 텍스트를 붙여넣어 주세요.')
         tk.Label(footer, textvariable=self.status, bg=BG, fg=MUTED, font=(FONT, 10),
                  anchor='w', justify='left', wraplength=730).pack(side='left')
-        self.button(footer, '새 파일 시작', self.clear).pack(side='right')
+        self.clear_button = self.button(footer, '새 파일 시작', self.clear)
+        self.clear_button.pack(side='right')
 
     def label(self, parent, text, size=11, color=FG, bold=False, bg=PANEL):
         return tk.Label(parent, text=text, bg=bg, fg=color, anchor='w', justify='left',
@@ -123,57 +136,133 @@ class App:
     def refresh(self):
         total, received = self.transfer.total_parts, self.transfer.received_parts
         ready = total > 0 and not self.transfer.missing
-        self.stage.configure(text='검증 완료' if ready else '수신 중' if total else '수신 대기')
+        self.stage.configure(text='새 본문 확인 대기' if self.input_text else '검증 완료' if ready else '수신 중' if total else '수신 대기')
         self.file_label.configure(text=self.transfer.filename if total else '아직 받은 파일이 없어요')
         self.detail.configure(text=f'{self.transfer.file_size:,} 바이트 · 원본 크기' if total else '본문을 붙여넣고 확인을 눌러주세요.')
         self.progress_label.configure(text='100%' if ready else f'{received} / {total} 조각' if total else 'READY')
         self.progress['value'] = received / total * 100 if total else 0
-        self.missing.configure(text='원본 일치 확인 완료.\n이제 파일을 저장할 수 있어요.' if ready else
+        self.missing.configure(text='가져온 본문의 확인이 필요해요.\n텍스트 확인 버튼을 눌러주세요.' if self.input_text else
+                               '원본 일치 확인 완료.\n이제 파일을 저장할 수 있어요.' if ready else
                                '필요한 조각: ' + ', '.join(map(str, self.transfer.missing)) if total else
                                '원본과 같은 파일인지 확인한 뒤\n안전하게 저장합니다.', fg=ACCENT if ready else MUTED)
-        self.save_button.configure(state='normal' if ready else 'disabled')
+        self.save_button.configure(state='normal' if ready and not self.busy and not self.input_text else 'disabled')
 
-    def limit_text(self, event=None):
-        if self.text.edit_modified():
-            self.text.delete(f'1.0+{MAX_TEXT_CHARS}c', 'end-1c')
-            self.text.edit_modified(False)
-            count = self.text.count('1.0', 'end-1c', 'chars')
-            length = count[0] if count else 0
-            self.count.configure(text=f'{length:,} 자')
-            if length: self.placeholder.place_forget()
-            else: self.placeholder.place(relx=.5, rely=.43, anchor='center')
+    def set_input(self, value):
+        """Keep complete input out of Tk: only a bounded, short-line preview is drawn."""
+        if self.busy or self.closed:
+            return
+        if not isinstance(value, str) or len(value) > MAX_TEXT_CHARS:
+            raise DecodeError('본문이 너무 큽니다. 2,097,152자 이하의 텍스트를 가져와 주세요.')
+        self.input_text = value
+        sample = value[:4096]
+        # Hard-wrap the preview so even an unbroken Base64 string is cheap to draw.
+        lines = []
+        for line in sample.splitlines():
+            lines.extend(line[i:i + 72] for i in range(0, len(line), 72))
+        preview = '\n'.join(lines)
+        if len(value) > 4096:
+            preview += '\n\n… 미리보기만 줄였습니다. 원본 본문은 모두 보관하고 있어요.'
+        self.text.configure(state='normal')
+        self.text.delete('1.0', 'end')
+        self.text.insert('1.0', preview)
+        self.text.configure(state='disabled')
+        self.count.configure(text=f'{len(value):,} 자 · 전체 보관' if value else '0 자')
+        if value:
+            self.placeholder.place_forget()
+            self.status.set('본문을 가져왔어요. 텍스트 확인을 누르면 전체 내용을 검증합니다.')
+        else:
+            self.placeholder.place(relx=.5, rely=.43, anchor='center')
+        self.refresh()
 
     def paste(self, event=None):
+        if self.busy or self.closed:
+            return 'break'
         try:
-            value = self.root.clipboard_get()
-            count = self.text.count('1.0', 'end-1c', 'chars')
-            if len(value) + (count[0] if count else 0) > MAX_TEXT_CHARS:
-                raise DecodeError('텍스트가 너무 깁니다. 먼저 현재 조각을 추가해 주세요.')
-            self.text.insert('insert', value)
+            self.set_input(self.root.clipboard_get())
             self.text.focus_set()
         except (tk.TclError, DecodeError) as exc:
             messagebox.showerror('붙여넣기 실패', str(exc), parent=self.root)
         return 'break'
 
+    @staticmethod
+    def decode_input(candidate, value):
+        candidate.add(value)
+        return candidate
+
     def add(self):
+        if self.busy or self.closed:
+            return
+        if not self.input_text.strip():
+            self.status.set('먼저 메일 본문을 붙여넣어 주세요.')
+            return
+        self.busy = True
+        for button in (self.paste_button, self.add_button, self.clear_button, self.save_button):
+            button.configure(state='disabled')
+        self.stage.configure(text='원본 확인 중')
+        self.status.set('전체 본문을 확인하고 있어요…')
+        self.progress.configure(mode='indeterminate')
+        self.progress.start(15)
+        # A candidate prevents a failed batch from changing the active transfer.
         try:
-            added = self.transfer.add(self.text.get('1.0', 'end-1c'))
-            self.text.delete('1.0', 'end')
+            self.future = self.executor.submit(self.decode_input, copy.deepcopy(self.transfer), self.input_text)
+        except Exception as exc:
+            self.busy = False
+            self.future = None
+            self.progress.stop()
+            self.progress.configure(mode='determinate')
+            for button in (self.paste_button, self.add_button, self.clear_button):
+                button.configure(state='normal')
             self.refresh()
+            self.status.set('본문 확인을 시작하지 못했어요. 입력은 그대로 보관됩니다.')
+            messagebox.showerror('확인 실패', str(exc), parent=self.root)
+            return
+        self.poll_id = self.root.after(20, self.poll_decode)
+
+    def poll_decode(self):
+        self.poll_id = None
+        if self.closed:
+            return
+        if not self.future.done():
+            self.poll_id = self.root.after(20, self.poll_decode)
+            return
+        self.busy = False
+        self.progress.stop()
+        self.progress.configure(mode='determinate')
+        for button in (self.paste_button, self.add_button, self.clear_button):
+            button.configure(state='normal')
+        try:
+            self.transfer = self.future.result()
+            self.set_input('')
             self.status.set(self.transfer.status)
-        except DecodeError as exc:
-            messagebox.showerror('추가 실패', str(exc), parent=self.root)
+        except Exception as exc:
+            self.status.set('본문 확인에 실패했어요. 입력 내용은 그대로 보관됩니다.')
+            messagebox.showerror('확인 실패', str(exc), parent=self.root)
+        finally:
+            self.future = None
+            self.refresh()
 
     def clear(self):
-        if (self.transfer.received_parts or self.text.get('1.0', 'end-1c').strip()) and not messagebox.askyesno(
+        if self.busy or self.closed:
+            return
+        if (self.transfer.received_parts or self.input_text) and not messagebox.askyesno(
                 '새 파일 시작', '현재 입력과 복원 데이터를 비우고 새 파일을 시작할까요?', parent=self.root):
             return
         self.transfer.clear()
-        self.text.delete('1.0', 'end')
-        self.refresh()
+        self.set_input('')
         self.status.set('준비 완료 · 받은 텍스트를 붙여넣어 주세요.')
 
+    def close(self):
+        self.closed = True
+        if self.poll_id is not None:
+            self.root.after_cancel(self.poll_id)
+        self.progress.stop()
+        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.root.update_idletasks()
+        self.root.destroy()
+
     def save(self):
+        if self.busy or self.input_text or self.closed:
+            return
         try:
             raw = self.transfer.assemble()
         except DecodeError as exc:
@@ -204,14 +293,21 @@ if __name__ == '__main__':
         raw = bytes(range(256)) * 1400
         digest = hashlib.sha256(raw).hexdigest()
         assert str(application.save_button['state']) == 'disabled'
-        application.text.insert('1.0', json.dumps(dict(format='base64-transfer-v2',
+        application.set_input(json.dumps(dict(format='base64-transfer-v2',
             id=digest, name='한번에.bin', size=len(raw), sha256=digest, part=1, parts=1,
             data=base64.b64encode(raw).decode('ascii'))))
+        assert len(application.text.get('1.0', 'end-1c')) < 5000
         application.add()
+        import time
+        deadline = time.monotonic() + 15
+        while application.busy and time.monotonic() < deadline:
+            root.update()
+            time.sleep(.005)
+        assert not application.busy
         assert application.transfer.assemble() == raw
         assert str(application.save_button['state']) == 'normal'
         root.update()
-        root.destroy()
+        application.close()
         Path(sys.argv[2]).write_text('PASS: bundled Tk UI and decoder\n', encoding='utf-8')
     else:
         root.mainloop()

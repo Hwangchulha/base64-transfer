@@ -33,10 +33,12 @@ if destination.exists():
         backup = backup_dir / ('Base64Restore-' + hashlib.sha256(destination.read_bytes()).hexdigest()[:10] + '.previous.exe')
         if not backup.exists():
             shutil.copy2(destination, backup)
-        shutil.copy2(exe, destination)
+        if '--build-only' not in sys.argv:
+            shutil.copy2(exe, destination)
 else:
-    with destination.open('xb') as output, exe.open('rb') as source:
-        shutil.copyfileobj(source, output)
-print('DESKTOP_EXE=' + str(destination))
-print('SHA256=' + hashlib.sha256(destination.read_bytes()).hexdigest())
+    if '--build-only' not in sys.argv:
+        with destination.open('xb') as output, exe.open('rb') as source:
+            shutil.copyfileobj(source, output)
+print(('BUILT_EXE=' + str(exe)) if '--build-only' in sys.argv else ('DESKTOP_EXE=' + str(destination)))
+print('SHA256=' + hashlib.sha256(exe.read_bytes()).hexdigest())
 print(report.read_text(encoding='utf-8').strip())

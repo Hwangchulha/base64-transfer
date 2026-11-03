@@ -1,0 +1,35 @@
+PC paste performance fix — 1.2.1
+
+Same Windows 11 PC, Python 3.12 / Tk, visible 1040x720 window.
+Synthetic v2 envelope: 1,048,320 raw bytes, 1,398,023 text characters.
+Measured with time.perf_counter around Transfer.add, App.paste and root.update.
+These are individual local measurements, not guarantees for all PCs.
+
+Before:
+  Decoder:               0.00709 seconds
+  Paste callback:        0.00535 seconds
+  Render/event update:  26.87867 seconds
+After:
+  Decoder:               0.00730 seconds
+  Paste callback:        0.00179 seconds
+  Render/event update:   0.00582 seconds
+  Displayed preview:     4,188 characters
+  Complete input string: preserved exactly
+
+Cause: a 1.4-million-character unbroken Base64 line was inserted into a
+character-wrapped Tk Text widget. Display layout dominated the delay.
+Per-edit length scans also ran on the same UI thread.
+
+Fix:
+- Preserve the full input string separately from the widget.
+- Display only the first 4,096 source characters, hard-wrapped into short lines.
+- Read-only preview; pasted input replaces the previous pending body.
+- Decode/validate on a worker using a candidate transfer; update Tk only on
+  the main thread. Preserve input and prior transfer on failure.
+- Disable Save while new input is pending or validation is running.
+- Stop polling/animation on close and recover controls on submission failure.
+
+Validation: Windows GUI tests cover full-file recovery from bounded preview,
+failed new input, disabled stale Save, close during validation, and submission
+failure. Existing decoder tests retain v1/v2 coverage. Packaged EXE self-test
+runs the real UI input/validation path and verifies recovered bytes.
