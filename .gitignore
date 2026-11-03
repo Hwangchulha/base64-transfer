@@ -1,0 +1,8 @@
+**/build/
+**/.gradle/
+**/.gradle-home/
+**/.android/
+**/__pycache__/
+**/local.properties
+**/*.spec
+android/*validation.log

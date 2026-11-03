@@ -1,0 +1,30 @@
+Base64 Transfer v1
+
+Android selects one file and offers Gmail composition or clipboard copying.
+PC accepts the exact same JSON text through either route, offline.
+
+Input limit: 0 <= bytes < 1,048,576 (1 MiB).
+Raw chunk size: 102,400 bytes (100 KiB). This is an application policy,
+not an Android guaranteed clipboard maximum. Last chunk may be shorter.
+Empty files use one chunk with an empty data string.
+
+Each chunk is an independent JSON object:
+{"format":"base64-transfer-v1","id":"<full lowercase SHA256>","name":"original.ext","size":123,"sha256":"<full lowercase SHA256>","part":1,"parts":1,"data":"<standard padded Base64>"}
+
+Parts are 1-based. Base64 encodes each raw chunk independently. Decode each
+chunk first, then join bytes in part order; do NOT concatenate padded Base64.
+All metadata except part and data must match. Identical duplicate chunks
+are harmless. Conflicts must be rejected. Save only after all parts arrive
+and final byte size and SHA256 match. SHA256 detects changes; it does not
+encrypt the file or authenticate the sender.
+
+Gmail opens an unsent composition; the user sends each part explicitly.
+Clipboard copies one selected part; the user transfers that text separately.
+Opening Gmail does not confirm sending. Copying does not confirm receipt.
+
+Why chunks below 1 MB:
+https://developer.android.com/reference/android/os/TransactionTooLargeException
+Android uses a shared 1 MB Binder transaction buffer. Clipboard calls also
+cross this service boundary. String serialization and other metadata add
+overhead; even payloads under the buffer size can fail. Physical-device
+Gmail and clipboard testing is still required.
