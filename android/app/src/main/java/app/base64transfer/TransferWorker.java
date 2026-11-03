@@ -40,7 +40,7 @@ public final class TransferWorker extends Fragment {
         if (busy) return;
         busy = true;
         transfer = null;
-        message = "파일을 읽고 변환하는 중…";
+        message = "파일을 읽고 압축·변환하는 중…";
         changed();
         executor.execute(() -> {
             Transfer result = null;

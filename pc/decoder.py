@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import unicodedata
+import zlib
 from dataclasses import dataclass
 from compact_text import decode_compact
 
@@ -44,15 +45,19 @@ class Chunk:
 
 
 def _validate(obj):
-    if type(obj) is not dict or set(obj) != FIELDS:
-        raise DecodeError('Each envelope must have exactly the eight protocol fields.')
+    if type(obj) is not dict:
+        raise DecodeError('Each envelope must be a JSON object.')
+    compressed = obj.get('format') == 'text-transfer-v4'
+    expected_fields = FIELDS | {'encoding', 'packedSize'} if compressed else FIELDS
+    if set(obj) != expected_fields:
+        raise DecodeError('Envelope fields do not match its format.')
     for key in ('format', 'id', 'name', 'sha256', 'data'):
         if type(obj[key]) is not str:
             raise DecodeError(key + ' must be a string.')
     for key in ('size', 'part', 'parts'):
         if type(obj[key]) is not int:  # bool is deliberately not accepted.
             raise DecodeError(key + ' must be an integer.')
-    if obj['format'] not in (FORMAT, 'base64-transfer-v2', 'text-transfer-v3'):
+    if obj['format'] not in (FORMAT, 'base64-transfer-v2', 'text-transfer-v3', 'text-transfer-v4'):
         raise DecodeError('Unsupported format.')
     if not HEX.fullmatch(obj['id']) or not HEX.fullmatch(obj['sha256']):
         raise DecodeError('id and sha256 must be full lowercase SHA-256 hex.')
@@ -70,7 +75,21 @@ def _validate(obj):
         raise DecodeError('Invalid part count or part number for file size.')
     expected = size if single else CHUNK_BYTES if obj['part'] < parts else size - CHUNK_BYTES * (parts - 1)
     data = obj['data']
-    if obj['format'] == 'text-transfer-v3':
+    if compressed:
+        if obj['encoding'] != 'zlib' or type(obj['encoding']) is not str:
+            raise DecodeError('Unsupported compression encoding.')
+        if type(obj['packedSize']) is not int or not 0 < obj['packedSize'] < size:
+            raise DecodeError('Invalid compressed size.')
+        try:
+            packed = decode_compact(unicodedata.normalize('NFC', data), obj['packedSize'])
+            inflater = zlib.decompressobj()
+            # Never inflate without a bound: even malicious input allocates at most size+1.
+            raw = inflater.decompress(packed, size + 1)
+            if len(raw) != size or not inflater.eof or inflater.unused_data or inflater.unconsumed_tail:
+                raise ValueError('Compressed stream length, end marker or trailing data is invalid.')
+        except (ValueError, zlib.error) as exc:
+            raise DecodeError('압축 데이터가 손상되었거나 원본 크기와 맞지 않습니다.') from exc
+    elif obj['format'] == 'text-transfer-v3':
         try:
             raw = decode_compact(unicodedata.normalize('NFC', data), expected)
         except ValueError as exc:
@@ -85,6 +104,8 @@ def _validate(obj):
         if len(raw) != expected or base64.b64encode(raw).decode('ascii') != data:
             raise DecodeError('Invalid chunk length or noncanonical padded Base64.')
     metadata = tuple(obj[k] for k in ('format', 'id', 'name', 'size', 'sha256', 'parts'))
+    if compressed:
+        metadata += (obj['encoding'], obj['packedSize'])
     return Chunk(metadata, obj['part'], raw)
 
 
@@ -164,6 +185,14 @@ class Transfer:
     @property
     def file_size(self):
         return self._metadata[3] if self._metadata else 0
+
+    @property
+    def packed_size(self):
+        return self._metadata[7] if self._metadata and self._metadata[0] == 'text-transfer-v4' else self.file_size
+
+    @property
+    def compressed(self):
+        return bool(self._metadata and self._metadata[0] == 'text-transfer-v4')
 
     @property
     def missing(self):

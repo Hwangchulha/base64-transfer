@@ -115,7 +115,7 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         space(layout, 16);
         button(layout, "전달 방법 안내", false, v -> new AlertDialog.Builder(this)
                 .setTitle("텍스트 전달 안내")
-                .setMessage("파일 전체를 한자·한글 모양의 텍스트로 바꿉니다. PC에서 원본 바이트로 복원되며, 압축이나 암호화는 아닙니다.\n\n약 700 KB 파일은 앱의 일반 클립보드 용량 기준에 들어갑니다. 실제 복사 크기를 표시하며, 한도를 넘으면 나누거나 우회하지 않습니다.\n\n큰 본문은 한 번 복사한 뒤 Gmail 본문을 길게 눌러 붙여넣으세요. 받는 사람과 내용을 확인하고 직접 보내기를 눌러주세요.\n\n일반 텍스트 클립보드이므로 다른 앱에서 읽을 수 있습니다. 키보드 기록 표시 여부는 키보드 앱마다 다르며 보장하지 않습니다. 실제 키보드·Gmail 동작은 아직 검증하지 못했습니다.")
+                .setMessage("파일 전체를 한자·한글 모양의 텍스트로 바꿉니다. PC에서 원본 바이트로 복원되며, 먼저 무손실 압축을 시도하며 더 짧을 때만 사용합니다. 암호화는 아닙니다. JPG·XLSX 등 이미 압축된 파일은 효과가 적을 수 있습니다.\n\n약 700 KB 파일은 앱의 일반 클립보드 용량 기준에 들어갑니다. 실제 복사 크기를 표시하며, 한도를 넘으면 나누거나 우회하지 않습니다.\n\n큰 본문은 한 번 복사한 뒤 Gmail 본문을 길게 눌러 붙여넣으세요. 받는 사람과 내용을 확인하고 직접 보내기를 눌러주세요.\n\n일반 텍스트 클립보드이므로 다른 앱에서 읽을 수 있습니다. 키보드 기록 표시 여부는 키보드 앱마다 다르며 보장하지 않습니다. 실제 키보드·Gmail 동작은 아직 검증하지 못했습니다.")
                 .setPositiveButton("확인", null).show());
         setContentView(scroll);
         changed();
@@ -211,8 +211,12 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         String budget = clipboardBytes < 0 ? "클립보드 크기 확인 불가"
                 : "클립보드 " + sizeLabel(clipboardBytes) + " / 800 KiB · "
                 + (clipboardBytes <= PARCEL_BUDGET ? "용량 기준 이내" : "복사 한도 초과");
+        String compression = ready && transfer.compressed
+                ? String.format(java.util.Locale.KOREA, "원본 %,d → 압축 %,d 바이트 · %.1f%% 감소",
+                        transfer.size, transfer.packedSize, 100.0 * (transfer.size - transfer.packedSize) / transfer.size)
+                : "압축 효과 없음 · 원본 방식";
         fileMeta.setText(ready ? java.text.NumberFormat.getIntegerInstance(java.util.Locale.KOREA).format(transfer.size)
-                + " 바이트 · 파일 전체\n" + budget : "문서 · 사진 · 모든 파일 형식");
+                + " 바이트 · 파일 전체\n" + compression + "\n" + budget : "문서 · 사진 · 모든 파일 형식");
         partLabel.setText(ready ? "파일 전체 · 한 번에 전달"
                 : worker.busy ? "전달할 텍스트를 준비하고 있어요" : "파일을 선택하면 시작할 수 있어요");
         partLabel.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);

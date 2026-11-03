@@ -4,15 +4,20 @@ import hashlib
 import json
 import sys
 import unicodedata
+import zlib
 
 rows = [json.loads(line) for line in sys.stdin if line.strip()]
 assert len(rows) == 1
 row = rows[0]
-assert set(row) == {'format', 'id', 'name', 'size', 'sha256', 'part', 'parts', 'data'}
-assert row['format'] == 'text-transfer-v3'
+compressed = row['format'] == 'text-transfer-v4'
+assert row['format'] in ('text-transfer-v3', 'text-transfer-v4')
+assert set(row) == {'format', 'id', 'name', 'size', 'sha256', 'part', 'parts', 'data'} | ({'encoding', 'packedSize'} if compressed else set())
+if compressed:
+    assert row['encoding'] == 'zlib'
+packed_size = row['packedSize'] if compressed else row['size']
 assert 0 <= row['size'] < 1048576
 assert row['part'] == row['parts'] == 1
-assert len(row['data']) == (row['size'] * 8 + 14) // 15
+assert len(row['data']) == (packed_size * 8 + 14) // 15
 assert unicodedata.normalize('NFKC', row['data']) == row['data']
 result = bytearray()
 pending = bits = 0
@@ -28,11 +33,16 @@ for char in row['data']:
         raise AssertionError('Invalid symbol')
     pending = (pending << 15) | index
     bits += 15
-    while bits >= 8 and len(result) < row['size']:
+    while bits >= 8 and len(result) < packed_size:
         bits -= 8
         result.append((pending >> bits) & 255)
         pending &= (1 << bits) - 1
 assert pending == 0, 'Nonzero padding'
+assert len(result) == packed_size
+if compressed:
+    inflater = zlib.decompressobj()
+    result = inflater.decompress(result, row['size'] + 1)
+    assert inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail
 assert len(result) == row['size']
 assert hashlib.sha256(result).hexdigest() == row['id'] == row['sha256']
 if row['name'].startswith('random-vector-'):
@@ -43,7 +53,9 @@ if row['name'].startswith('random-vector-'):
         state ^= state >> 17
         state ^= (state << 5) & 0xFFFFFFFF
         expected.append(state & 255)
+elif row['name'].startswith('compressible-vector-'):
+    expected = bytes(row['size'])
 else:
     expected = bytes((i * 31 + 7) & 255 for i in range(row['size']))
 assert result == expected
-print(f"PASS: Java -> Python compact15: {len(result)} bytes, one envelope")
+print(f"PASS: Java -> Python {row['format']}: {len(result)} bytes, one envelope")

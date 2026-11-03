@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.zip.Deflater;
 
 /** Pure JVM protocol implementation. Caller owns and closes the stream. */
 public final class Transfer {
@@ -14,9 +15,12 @@ public final class Transfer {
     public final String sha256;
     public final int size;
     public final int parts;
-    private final String[] envelopes;
+    public final boolean compressed;
+    /** Selected payload byte count: compressed size for v4, original size for v3. */
+    public final int packedSize;
+    private final String envelope;
 
-    private Transfer(String name, byte[] bytes) {
+    private Transfer(String name, byte[] bytes) throws IOException {
         this.name = boundedName(name);
         size = bytes.length;
         parts = 1;
@@ -28,8 +32,12 @@ public final class Transfer {
         } catch (NoSuchAlgorithmException impossible) {
             throw new AssertionError(impossible);
         }
-        envelopes = new String[parts];
-        for (int part = 1; part <= parts; part++) envelopes[part - 1] = encodeEnvelope(bytes, part);
+        byte[] packed = compress(bytes);
+        String original = encodeEnvelope(bytes, false);
+        String candidate = encodeEnvelope(packed, true);
+        compressed = candidate.length() < original.length();
+        packedSize = compressed ? packed.length : size;
+        envelope = compressed ? candidate : original;
     }
 
     public static Transfer read(InputStream input, String name) throws IOException {
@@ -56,15 +64,36 @@ public final class Transfer {
 
     public String envelope(int part) {
         if (part < 1 || part > parts) throw new IllegalArgumentException("Invalid part");
-        return envelopes[part - 1];
+        return envelope;
     }
 
-    private String encodeEnvelope(byte[] bytes, int part) {
-        String data = CompactText15.encode(bytes);
-        return "{\"format\":\"text-transfer-v3\",\"id\":\"" + sha256
+    private static byte[] compress(byte[] bytes) throws IOException {
+        Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, false);
+        try {
+            deflater.setInput(bytes);
+            deflater.finish();
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            while (!deflater.finished()) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Cancelled");
+                int count = deflater.deflate(buffer);
+                if (count == 0 && !deflater.finished()) throw new IOException("Compression stalled");
+                if (output.size() + count > LIMIT_BYTES + 65536) throw new IOException("Compression output limit");
+                output.write(buffer, 0, count);
+            }
+            return output.toByteArray();
+        } finally {
+            deflater.end();
+        }
+    }
+
+    private String encodeEnvelope(byte[] payload, boolean packed) {
+        String data = CompactText15.encode(payload);
+        return "{\"format\":\"text-transfer-" + (packed ? "v4" : "v3") + "\",\"id\":\"" + sha256
                 + "\",\"name\":" + quote(name) + ",\"size\":" + size
-                + ",\"sha256\":\"" + sha256 + "\",\"part\":" + part
-                + ",\"parts\":" + parts + ",\"data\":\"" + data + "\"}";
+                + ",\"sha256\":\"" + sha256 + "\",\"part\":1,\"parts\":1"
+                + (packed ? ",\"encoding\":\"zlib\",\"packedSize\":" + payload.length : "")
+                + ",\"data\":\"" + data + "\"}";
     }
 
     // Preserve the original name in the protocol up to 255 UTF-16 units.

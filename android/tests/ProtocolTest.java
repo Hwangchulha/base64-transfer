@@ -17,7 +17,8 @@ public final class ProtocolTest {
             int size = args.length > 1 ? Integer.parseInt(args[1]) : 102401;
             if (size < 0 || size > Transfer.LIMIT_BYTES) throw new IllegalArgumentException("Invalid test size");
             boolean random = args.length > 2 && args[2].equals("random");
-            byte[] input = payload(size);
+            boolean compressible = args.length > 2 && args[2].equals("compressible");
+            byte[] input = compressible ? new byte[size] : payload(size);
             if (random) {
                 int state = 0x15c0de;
                 for (int i = 0; i < size; i++) {
@@ -27,7 +28,7 @@ public final class ProtocolTest {
                     input[i] = (byte) state;
                 }
             }
-            Transfer transfer = Transfer.read(new ByteArrayInputStream(input), (random ? "random-vector-" : "vector-") + size + ".bin");
+            Transfer transfer = Transfer.read(new ByteArrayInputStream(input), (random ? "random-vector-" : compressible ? "compressible-vector-" : "vector-") + size + ".bin");
             for (int p = 1; p <= transfer.parts; p++) System.out.println(transfer.envelope(p));
             return;
         }
@@ -44,9 +45,10 @@ public final class ProtocolTest {
             for (int p = 1; p <= t.parts; p++) {
                 String json = t.envelope(p);
                 String encoded = json.substring(json.indexOf("\"data\":\"") + 8, json.length() - 2);
-                byte[] chunk = CompactText15Test.decode(encoded, size);
+                byte[] chunk = CompactText15Test.decode(encoded, t.packedSize);
+                if (t.compressed) chunk = CompressionTest.unpack(chunk, size);
                 check(chunk.length == size, "full single payload");
-                check(json.startsWith("{\"format\":\"text-transfer-v3\""), "v3 format");
+                check(json.startsWith("{\"format\":\"text-transfer-" + (t.compressed ? "v4" : "v3") + "\""), "selected format");
                 joined.write(chunk);
             }
             check(Arrays.equals(raw, joined.toByteArray()), "roundtrip " + size);
@@ -54,6 +56,7 @@ public final class ProtocolTest {
             try { t.envelope(t.parts + 1); throw new AssertionError("excess part accepted"); } catch (IllegalArgumentException expected) { }
         }
         CompactText15Test.run();
+        CompressionTest.run();
         final int[] consumed = {0};
         InputStream endless = new InputStream() {
             @Override public int read() { consumed[0]++; return 7; }

@@ -1,4 +1,4 @@
-Text Transfer — Android 1.3 (versionCode 4)
+Text Transfer — Android 1.4.0 (versionCode 5)
 
 Native Java Activity, Android 8.0 / API 26+. No additional runtime dependencies,
 network permission, Google authorization, password storage or storage permission.
@@ -7,7 +7,10 @@ Uses the SAF file picker and the existing debug signing key.
 사용 방법
 1. 1 MiB(1,048,576바이트) 미만의 파일을 선택합니다.
 2. 파일 전체를 한자·한글 모양의 텍스트 하나로 변환합니다. PC에서 원본
-   바이트로 복원되며, 압축이나 암호화가 아닙니다. 분할하지 않습니다.
+   바이트로 복원됩니다. 먼저 zlib 무손실 압축을 시도하고 전체 JSON이 더 짧을
+   때만 압축 결과를 사용합니다. 암호화가 아니며 분할하지 않습니다.
+   파일 카드에 원본 → 압축 크기와 감소율을 표시하고, 효과가 없으면
+   ‘압축 효과 없음 · 원본 방식’으로 표시합니다.
 3. 파일 카드에서 실제 클립보드 크기와 800 KiB 한도를 확인합니다.
    약 700 KB~700 KiB 원본은 이 용량 기준에 들어갑니다. 실제 크기를 검사하므로
    모든 1 MiB 미만 파일이 복사 가능한 것은 아닙니다.
@@ -29,18 +32,37 @@ URI 클립보드, content provider, 파일 첨부, 자동 분할은 사용하지
 용량 기준 이내라도 Android의 공유 Binder 버퍼 상황에 따라 실패할 수 있습니다.
 예외 시 경로·본문 대신 짧은 오류 클래스와 작업 결과를 표시합니다.
 
-Protocol v3 / compact15
+Protocol selection: v4 compressed / v3 original
 Input: 0 <= original bytes < 1,048,576. Bounded actual reads enforce the limit;
 provider size metadata is ignored. The read proving rejection consumes at most
 1,048,576 bytes. Empty input produces one envelope with empty data.
-Exactly one JSON object/string, same eight fields, in this order:
-{"format":"text-transfer-v3","id":"<full lowercase SHA256>","name":"original.ext","size":123,"sha256":"<full lowercase SHA256>","part":1,"parts":1,"data":"<compact15 text>"}
+Always exactly one JSON string. First produce RFC1950 zlib-wrapped bytes using
+Deflater(DEFAULT_COMPRESSION, nowrap=false); Deflater.end() runs in finally.
+Compression, encoding and candidate selection run inside the existing conversion
+worker. Build both full JSON candidates and select v4 ONLY if its Java String
+length is strictly smaller than v3. Ties keep v3. No lossy conversion, extraction,
+file splitting or encryption. No new dependencies or network access.
 
-part=1 and parts=1 always. id and sha256 hash the complete original bytes.
+v3 fallback, unchanged eight-field schema:
+{"format":"text-transfer-v3","id":"<original lowercase SHA256>","name":"original.ext","size":123,"sha256":"<original lowercase SHA256>","part":1,"parts":1,"data":"<original bytes compact15>"}
+
+v4, same eight fields plus encoding and packedSize:
+{"format":"text-transfer-v4","id":"<original lowercase SHA256>","name":"original.ext","size":123,"sha256":"<original lowercase SHA256>","part":1,"parts":1,"encoding":"zlib","packedSize":42,"data":"<zlib bytes compact15>"}
+
+size, id and sha256 ALWAYS describe the original file, not compressed bytes.
+packedSize is the compressed byte count. part=1 and parts=1 for both formats.
+Public Transfer.compressed identifies the selected format. Transfer.packedSize
+is compressed bytes for v4, original bytes for v3 (v3 JSON has no packedSize).
+PC must decode compact15 using packedSize for v4, then decompress zlib with strict
+output bounds, EOF and no trailing junk, and validate original size and SHA256.
+Compression benefit depends on content: text/repetition can shrink substantially;
+already-compressed JPG/XLSX and random data often benefit little or not at all.
+Compression is not a guarantee of fitting a receiving app's limits.
+
 CompactText15.encode(byte[]) is pure Java, suitable for independent JVM use.
-Consume original bits most-significant-bit first, in big-endian groups of 15.
+Consume selected payload bits most-significant-bit first, in big-endian groups of 15.
 The final incomplete group is padded with ZERO bits on the RIGHT.
-Symbol count = ceil(size * 8 / 15).
+Symbol count = ceil(payload byte count * 8 / 15): packedSize for v4, size for v3.
 Exact final alphabet (inclusive bounds):
   indexes     0 ..  6581 -> U+3400 .. U+4DB5  (6582 chars)
   indexes  6582 .. 27483 -> U+4E00 .. U+9FA5  (20902 chars)
@@ -51,8 +73,9 @@ Do NOT use the earlier 6592/27584 boundaries.
 All alphabet symbols were verified stable under NFC and NFKC. Hangul decomposes
 under NFD/NFKD: the receiver can restore NFC before decoding. This is not a claim
 of stability under every normalization form. PC must check symbol count, padding,
-full decoded size and SHA256 before saving. This encoding is neither compression
-nor encryption. SHA256 is not sender authentication. Android emits v3 only;
+full decoded size and SHA256 before saving. Compact15 itself is a reversible text
+encoding; zlib is the separate lossless compression step. Neither is encryption.
+SHA256 is not sender authentication. Android emits v4 when beneficial, otherwise v3.
 PC compatibility with prior protocols is handled independently.
 
 Original filenames are capped at 255 UTF-16 units without splitting a surrogate
@@ -77,11 +100,11 @@ These budgets are policy limits, not guaranteed OS capacity.
 
 Storage / lifecycle
 Original bytes, encoded body and current UI state remain in memory. There is no
-provider or new content cache in v1.3. Removed v1.2 provider/store sources and tests.
+provider or new content cache in v1.4. Removed v1.2 provider/store sources and tests.
 Upgrades from v1.2 may retain old private cache files until Android evicts them or
-app cache is cleared; v1.3 cannot expose them because that provider no longer exists.
+app cache is cleared; v1.4 cannot expose them because that provider no longer exists.
 
-A retained native Fragment owns the worker for reads, hashing and encoding. Jobs
+A retained native Fragment owns the worker for reads, hashing, compression and encoding. Jobs
 hold the application context only; stopped Activities detach listeners. Rotation
 retains current conversion. No large content is saved in Bundles. Process death
 requires selecting the file again. Interruption is requested on destruction, but
@@ -103,12 +126,15 @@ Standalone JVM tests and deterministic vectors
   ./scripts/test-protocol.sh
   ./scripts/test-protocol.sh vectors 716800 > build/vector-716800.jsonl
   python3 tests/verify-vectors.py < build/vector-716800.jsonl
+  ./scripts/test-protocol.sh vectors 716800 compressible | python3 tests/verify-vectors.py
   ./scripts/test-protocol.sh vectors 700000 random | python3 tests/verify-vectors.py
 
 Generator stdout is one complete JSON envelope plus newline, encoded as UTF-8.
 Default payload byte i = (i*31+7)&255. Optional 'random' uses deterministic xorshift32,
 seed 0x15C0DE, operations x^=x<<13; x^=x>>>17; x^=x<<5; low byte per iteration.
-Default filename vector-SIZE.bin; random mode random-vector-SIZE.bin.
+Mode compressible produces all-zero bytes and a compressible-vector-SIZE.bin name.
+Default filename vector-SIZE.bin; random mode random-vector-SIZE.bin. Repeated
+default/zero vectors generally select v4; random/empty/small vectors may select v3.
 SIZE=0 is empty; SIZE=1048576 rejects. Pure codec is CompactText15.java.
 
 Tests cover all 32768 indexes, alphabet boundaries/highest index, uniqueness,
@@ -118,3 +144,13 @@ limits, short/zero reads, cancellation and filename escaping. Cross-language JSO
 vectors verify bytes/size/hash independently in Python. Physical keyboard history,
 actual Android parcel measurements on a device, Gmail paste, clipboard readback,
 TalkBack and lifecycle behavior still require device validation.
+
+Compression validation additionally tests Inflater(false) lossless roundtrip,
+original/packed sizes, complete zlib consumption, empty/small inputs and a range
+of selection thresholds. Expected selection is checked against independently
+constructed complete v3/v4 envelopes, not only compressed payload byte counts.
+700000 and 716800-byte compressible and seeded random inputs are covered.
+
+Gmail status: actual Gmail paste remains unverified. The user's reported 140 KB
+success concerned OTHER applications; it is not a Gmail test result. Ordinary
+clipboard readback success does not prove Gmail or keyboard-history compatibility.

@@ -1,3 +1,15 @@
+Text Transfer v4 — optional lossless compression (app 1.4)
+
+Try standard RFC1950 zlib-wrapped DEFLATE before CompactText15. Select v4 only
+when its entire JSON envelope is shorter than the uncompressed v3 envelope.
+Otherwise send v3 unchanged. v4 adds encoding="zlib" and packedSize (integer)
+to the eight v3 fields. size/id/sha256 describe the ORIGINAL file, part=parts=1.
+0 < packedSize < size < 1048576. Encode packedSize bytes with the alphabet below.
+PC decodes exactly packedSize bytes, inflates with an original-size+1 output
+bound, requires exact original size, stream EOF, no trailing data or second
+stream, then verifies original SHA256. No raw DEFLATE, gzip or dictionaries.
+Update APK and EXE together; older receivers cannot read v4.
+
 Text Transfer v3 — CompactText15
 
 No splitting. Same eight JSON fields, format=text-transfer-v3, part=parts=1.
@@ -24,5 +36,5 @@ Small email Intents include the body; large ones first copy normal text then
 open a subject-only composer after user guidance. The user pastes once.
 No attachments, OAuth, network permission, clipboard URI or automatic split.
 
-PC reads v1/v2 legacy Base64 and v3 CompactText15. Formats may not be mixed in
+PC reads v1/v2 legacy Base64, v3 CompactText15, and compressed v4. Formats may not be mixed in
 one transfer. Update both APK and EXE; older EXE versions do not support v3.

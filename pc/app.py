@@ -139,6 +139,8 @@ class App:
         self.stage.configure(text='새 본문 확인 대기' if self.input_text else '검증 완료' if ready else '수신 중' if total else '수신 대기')
         self.file_label.configure(text=self.transfer.filename if total else '아직 받은 파일이 없어요')
         self.detail.configure(text=f'{self.transfer.file_size:,} 바이트 · 원본 크기' if total else '본문을 붙여넣고 확인을 눌러주세요.')
+        if self.transfer.compressed:
+            self.detail.configure(text=f'{self.transfer.packed_size:,} → {self.transfer.file_size:,} 바이트\n압축 해제 · 원본 검증 완료')
         self.progress_label.configure(text='100%' if ready else f'{received} / {total} 조각' if total else 'READY')
         self.progress['value'] = received / total * 100 if total else 0
         self.missing.configure(text='가져온 본문의 확인이 필요해요.\n텍스트 확인 버튼을 눌러주세요.' if self.input_text else
@@ -289,16 +291,19 @@ if __name__ == '__main__':
         import json
         from pathlib import Path
         root.withdraw()
+        import zlib
         raw = b'\xff' * (700 * 1024)
-        full_symbols, trailing_bits = divmod(len(raw) * 8, 15)
-        last_index = ((1 << trailing_bits) - 1) << (15 - trailing_bits)
-        # Known all-ones fixture: full symbols are the last alphabet character.
-        encoded = chr(0xC0A3) * full_symbols + chr(0xAC00 + last_index - 27484)
+        packed = zlib.compress(raw, 9)
+        binary = ''.join(f'{byte:08b}' for byte in packed)
+        indexes = (int(binary[i:i+15].ljust(15, '0'), 2) for i in range(0, len(binary), 15))
+        encoded = ''.join(chr(0x3400 + i) if i < 6582 else
+                          chr(0x4E00 + i - 6582) if i < 27484 else
+                          chr(0xAC00 + i - 27484) for i in indexes)
         digest = hashlib.sha256(raw).hexdigest()
         assert str(application.save_button['state']) == 'disabled'
-        application.set_input(json.dumps(dict(format='text-transfer-v3',
+        application.set_input(json.dumps(dict(format='text-transfer-v4',
             id=digest, name='한번에.bin', size=len(raw), sha256=digest, part=1, parts=1,
-            data=encoded), ensure_ascii=False))
+            encoding='zlib', packedSize=len(packed), data=encoded), ensure_ascii=False))
         assert len(application.text.get('1.0', 'end-1c')) < 5000
         application.add()
         import time

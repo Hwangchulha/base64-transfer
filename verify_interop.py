@@ -2,6 +2,7 @@
 import hashlib
 import json
 import pathlib
+import random
 import subprocess
 import sys
 import tempfile
@@ -36,8 +37,10 @@ def main():
                         str(ROOT / 'android/app/src/main/java/app/base64transfer/CompactText15.java'),
                         str(source)], check=True)
         sizes = [0, 1, 2, 3, CHUNK_BYTES-1, CHUNK_BYTES, CHUNK_BYTES+1, 700000, 716800, MAX_FILE_BYTES-1]
-        for size in sizes:
-            data = bytes(range(256)) * (size // 256) + bytes(range(size % 256))
+        cases = [(str(size), bytes(range(256)) * (size // 256) + bytes(range(size % 256))) for size in sizes]
+        cases.append(("random700KiB", random.Random(42).randbytes(716800)))
+        for label, data in cases:
+            size = len(data)
             input_path = temp / 'input.bin'
             input_path.write_bytes(data)
             output = subprocess.check_output([str(JDK / 'java'), '-cp', folder, 'Interop', str(input_path)],
@@ -45,7 +48,9 @@ def main():
             transfer = Transfer()
             lines = output.splitlines()
             assert len(lines) == 1, 'A file must not be split'
-            assert json.loads(lines[0])['format'] == 'text-transfer-v3'
+            obj = json.loads(lines[0])
+            expected = 'text-transfer-v4' if size > 1000 and label != 'random700KiB' else 'text-transfer-v3'
+            assert obj['format'] == expected, (label, obj['format'])
             if size == 716800:
                 assert len(lines[0].encode('utf-16-le')) < 800 * 1024
                 print('700KiB UTF16 payload bytes:', len(lines[0].encode('utf-16-le')))
@@ -55,7 +60,7 @@ def main():
             assert transfer.assemble() == data
             assert transfer.filename == '보고서_사진_😀.xlsx'
             assert not transfer.missing
-            print(f'PASS {size} bytes, {len(lines)} part(s), reverse order + duplicate, '
+            print(f'PASS {label}: {size} bytes, {len(lines)} part(s), reverse order + duplicate, '
                   f'SHA256 {hashlib.sha256(data).hexdigest()[:12]}')
         input_path.write_bytes(bytes(MAX_FILE_BYTES))
         rejected = subprocess.run([str(JDK / 'java'), '-cp', folder, 'Interop', str(input_path)],
