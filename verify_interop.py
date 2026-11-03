@@ -1,5 +1,6 @@
 """Run real Android Java encoder against PC Python decoder, without a device."""
 import hashlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -42,6 +43,8 @@ def main():
                                              encoding='utf-8')
             transfer = Transfer()
             lines = output.splitlines()
+            assert len(lines) == 1, 'A file must not be split'
+            assert json.loads(lines[0])['format'] == 'base64-transfer-v2'
             for line in lines:
                 transfer.add(line)
             assert transfer.add(lines[0]) == 0, 'Duplicate was not ignored'

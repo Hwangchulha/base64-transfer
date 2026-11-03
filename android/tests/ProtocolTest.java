@@ -28,13 +28,14 @@ public final class ProtocolTest {
                 @Override public synchronized int available() { return Integer.MAX_VALUE; }
             };
             Transfer t = Transfer.read(shortReads, "original.bin");
-            check(t.size == size && t.parts == Math.max(1, (size + 102399) / 102400), "size/parts");
+            check(t.size == size && t.parts == 1, "size/parts");
             ByteArrayOutputStream joined = new ByteArrayOutputStream();
             for (int p = 1; p <= t.parts; p++) {
                 String json = t.envelope(p);
                 String encoded = json.substring(json.indexOf("\"data\":\"") + 8, json.length() - 2);
                 byte[] chunk = java.util.Base64.getDecoder().decode(encoded);
-                check(chunk.length <= 102400, "chunk bound");
+                check(chunk.length == size, "full single payload");
+                check(json.startsWith("{\"format\":\"base64-transfer-v2\""), "v2 format");
                 joined.write(chunk);
             }
             check(Arrays.equals(raw, joined.toByteArray()), "roundtrip " + size);
@@ -64,6 +65,6 @@ public final class ProtocolTest {
         Thread.currentThread().interrupt();
         try { Transfer.read(new ByteArrayInputStream(new byte[0]), "cancel"); throw new AssertionError("not cancelled"); }
         catch (InterruptedIOException expected) { Thread.interrupted(); }
-        System.out.println("PASS: boundaries, chunk roundtrip, digest, bounded stream, escaping, cancellation");
+        System.out.println("PASS: boundaries, single-full roundtrip, digest, bounded stream, escaping, cancellation");
     }
 }

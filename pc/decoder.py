@@ -50,7 +50,7 @@ def _validate(obj):
     for key in ('size', 'part', 'parts'):
         if type(obj[key]) is not int:  # bool is deliberately not accepted.
             raise DecodeError(key + ' must be an integer.')
-    if obj['format'] != FORMAT:
+    if obj['format'] not in (FORMAT, 'base64-transfer-v2'):
         raise DecodeError('Unsupported format.')
     if not HEX.fullmatch(obj['id']) or not HEX.fullmatch(obj['sha256']):
         raise DecodeError('id and sha256 must be full lowercase SHA-256 hex.')
@@ -62,10 +62,11 @@ def _validate(obj):
     size = obj['size']
     if not 0 <= size < MAX_FILE_BYTES:
         raise DecodeError('File size must be 0 through 1,048,575 bytes.')
-    parts = max(1, (size + CHUNK_BYTES - 1) // CHUNK_BYTES)
+    single = obj['format'] == 'base64-transfer-v2'
+    parts = 1 if single else max(1, (size + CHUNK_BYTES - 1) // CHUNK_BYTES)
     if obj['parts'] != parts or not 1 <= obj['part'] <= parts:
         raise DecodeError('Invalid part count or part number for file size.')
-    expected = CHUNK_BYTES if obj['part'] < parts else size - CHUNK_BYTES * (parts - 1)
+    expected = size if single else CHUNK_BYTES if obj['part'] < parts else size - CHUNK_BYTES * (parts - 1)
     data = obj['data']
     if len(data) != 4 * ((expected + 2) // 3):
         raise DecodeError('Base64 length does not match this chunk.')
@@ -145,6 +146,18 @@ class Transfer:
         self._chunks = {}
 
     @property
+    def total_parts(self):
+        return self._metadata[5] if self._metadata else 0
+
+    @property
+    def received_parts(self):
+        return len(self._chunks)
+
+    @property
+    def file_size(self):
+        return self._metadata[3] if self._metadata else 0
+
+    @property
     def missing(self):
         if self._metadata is None:
             return ()
@@ -158,6 +171,8 @@ class Transfer:
     def status(self):
         if self._metadata is None:
             return '등록된 파일이 없습니다.'
+        if self._metadata[0] == 'base64-transfer-v2':
+            return '원본 크기와 SHA-256 검증 완료. 파일을 저장할 수 있습니다.'
         received = f'조각 {len(self._chunks)}/{self._metadata[5]}개 수신.'
         if self.missing:
             return received + ' 누락된 조각: ' + ', '.join(map(str, self.missing))

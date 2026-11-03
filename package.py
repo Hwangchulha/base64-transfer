@@ -7,7 +7,7 @@ root = Path(__file__).resolve().parent
 apk = root / 'android/app/build/outputs/apk/debug/app-debug.apk'
 required = ['START-HERE.txt', 'PROTOCOL.txt', 'pc/app.py', 'pc/decoder.py',
             'pc/launch.cmd', 'pc/README.txt', 'pc/test_decoder.py',
-            'pc/check_vectors.py', 'android/README.txt']
+            'pc/check_vectors.py', 'pc/build_windows.py', 'android/README.txt']
 for name in required:
     if not (root / name).is_file():
         raise SystemExit('Missing: ' + name)

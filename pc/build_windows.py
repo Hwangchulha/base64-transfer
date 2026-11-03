@@ -28,7 +28,12 @@ desktop = Path(buffer.value)
 destination = desktop / 'Base64Restore.exe'
 if destination.exists():
     if hashlib.sha256(destination.read_bytes()).digest() != hashlib.sha256(exe.read_bytes()).digest():
-        raise SystemExit('An existing Desktop Base64Restore.exe differs; not overwritten.')
+        backup_dir = root / 'backups'
+        backup_dir.mkdir(exist_ok=True)
+        backup = backup_dir / ('Base64Restore-' + hashlib.sha256(destination.read_bytes()).hexdigest()[:10] + '.previous.exe')
+        if not backup.exists():
+            shutil.copy2(destination, backup)
+        shutil.copy2(exe, destination)
 else:
     with destination.open('xb') as output, exe.open('rb') as source:
         shutil.copyfileobj(source, output)

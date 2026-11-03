@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="Base64 Transfer" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true">
+    <application android:label="Base64 Transfer" android:theme="@style/TransferTheme" android:icon="@drawable/ic_transfer" android:allowBackup="false" android:supportsRtl="true">
+        <provider android:name=".TextClipboardProvider" android:authorities="app.base64transfer.clipboard" android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

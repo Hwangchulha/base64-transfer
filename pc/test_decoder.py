@@ -25,6 +25,25 @@ def text(items):
 
 
 class DecoderTests(unittest.TestCase):
+    def test_v2_full_file_single_paste(self):
+        for size in (0, 1, CHUNK_BYTES + 1, MAX_FILE_BYTES - 1):
+            raw = (bytes(range(256)) * ((size + 255) // 256))[:size]
+            digest = hashlib.sha256(raw).hexdigest()
+            obj = dict(format='base64-transfer-v2', id=digest, sha256=digest,
+                       name='한번에.xlsx', size=size, part=1, parts=1,
+                       data=base64.b64encode(raw).decode('ascii'))
+            transfer = Transfer()
+            self.assertEqual(transfer.add(text([obj])), 1)
+            self.assertEqual(transfer.assemble(), raw)
+            self.assertEqual(transfer.total_parts, 1)
+            self.assertEqual(transfer.file_size, size)
+            self.assertEqual(transfer.received_parts, 1)
+            with self.assertRaises(DecodeError):
+                parse_envelopes(text([dict(obj, parts=2)]))
+            corrupt = dict(obj, sha256='0' * 64, id='0' * 64)
+            with self.assertRaises(DecodeError):
+                Transfer().add(text([corrupt]))
+
     def test_boundaries_reversed_duplicates_unicode_empty(self):
         self.assertEqual(CHUNK_BYTES, 102400)
         self.assertEqual(MAX_PARTS, 11)

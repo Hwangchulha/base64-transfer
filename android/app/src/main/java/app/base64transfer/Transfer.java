@@ -6,13 +6,11 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.Base64;
 
 /** Pure JVM protocol implementation. Caller owns and closes the stream. */
 public final class Transfer {
     public static final int LIMIT_BYTES = 1024 * 1024;
-    public static final int CHUNK_BYTES = 100 * 1024;
     public final String name;
     public final String sha256;
     public final int size;
@@ -22,7 +20,7 @@ public final class Transfer {
     private Transfer(String name, byte[] bytes) {
         this.name = boundedName(name);
         size = bytes.length;
-        parts = Math.max(1, (size + CHUNK_BYTES - 1) / CHUNK_BYTES);
+        parts = 1;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
             StringBuilder hex = new StringBuilder(64);
@@ -63,9 +61,8 @@ public final class Transfer {
     }
 
     private String encodeEnvelope(byte[] bytes, int part) {
-        int start = (part - 1) * CHUNK_BYTES;
-        String data = Base64.getEncoder().encodeToString(Arrays.copyOfRange(bytes, start, Math.min(size, start + CHUNK_BYTES)));
-        return "{\"format\":\"base64-transfer-v1\",\"id\":\"" + sha256
+        String data = Base64.getEncoder().encodeToString(bytes);
+        return "{\"format\":\"base64-transfer-v2\",\"id\":\"" + sha256
                 + "\",\"name\":" + quote(name) + ",\"size\":" + size
                 + ",\"sha256\":\"" + sha256 + "\",\"part\":" + part
                 + ",\"parts\":" + parts + ",\"data\":\"" + data + "\"}";
