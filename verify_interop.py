@@ -10,6 +10,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'pc'))
 from decoder import Transfer, CHUNK_BYTES, MAX_FILE_BYTES
+from encoder import encode_bytes
 
 JDK = ROOT.parent / 'personal-ledger/.tools/jdk/bin'
 JAVA_SOURCE = r'''
@@ -51,6 +52,16 @@ def main():
             obj = json.loads(lines[0])
             expected = 'text-transfer-v4' if size > 1000 and label != 'random700KiB' else 'text-transfer-v3'
             assert obj['format'] == expected, (label, obj['format'])
+            pc_body = encode_bytes(data, '보고서_사진_😀.xlsx')
+            pc_obj = json.loads(pc_body)
+            assert pc_obj['format'] == obj['format']
+            for field in ('id', 'name', 'size', 'sha256', 'part', 'parts'):
+                assert pc_obj[field] == obj[field], (label, field)
+            if expected == 'text-transfer-v3':
+                assert pc_obj['data'] == obj['data'], 'PC/Android compact encoding differs'
+            pc_transfer = Transfer()
+            pc_transfer.add(pc_body)
+            assert pc_transfer.assemble() == data
             if size == 716800:
                 assert len(lines[0].encode('utf-16-le')) < 800 * 1024
                 print('700KiB UTF16 payload bytes:', len(lines[0].encode('utf-16-le')))

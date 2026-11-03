@@ -4,6 +4,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from decoder import DecodeError, MAX_TEXT_CHARS, Transfer
+from encode_window import EncoderWindow
 
 BG = '#0b1018'
 PANEL = '#121b27'
@@ -19,13 +20,14 @@ class App:
     def __init__(self, root):
         self.root, self.transfer = root, Transfer()
         self.input_text = ''
+        self.encoder_window = None
         self.busy = False
         self.closed = False
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='decode')
         self.future = None
         self.poll_id = None
         root.protocol('WM_DELETE_WINDOW', self.close)
-        root.title('Base64 Restore')
+        root.title('Text Transfer 1.5 · 인코딩 / 복원')
         root.geometry('1040x720')
         root.minsize(900, 650)
         root.configure(bg=BG)
@@ -45,7 +47,7 @@ class App:
         header = tk.Frame(shell, bg=BG)
         header.pack(fill='x')
         self.label(header, 'B64 / RESTORE', size=12, color=ACCENT, bold=True, bg=BG).pack(side='left')
-        self.label(header, '●  OFFLINE', size=10, color=ACCENT, bg=BG).pack(side='right')
+        self.button(header, '파일 → 텍스트 만들기', self.open_encoder, primary=True).pack(side='right')
         self.label(shell, '텍스트에서, 원본으로.', size=27, bold=True, bg=BG).pack(anchor='w', pady=(18, 6))
         self.label(shell, '메일 본문을 한 번 붙여넣으면, 원본 파일로 돌아옵니다. 복원은 이 PC 안에서 처리돼요.',
                    size=11, color=MUTED, bg=BG).pack(anchor='w')
@@ -253,8 +255,18 @@ class App:
         self.set_input('')
         self.status.set('준비 완료 · 받은 텍스트를 붙여넣어 주세요.')
 
+    def open_encoder(self):
+        if self.closed:
+            return
+        if self.encoder_window is None or self.encoder_window.closed:
+            self.encoder_window = EncoderWindow(self)
+        else:
+            self.encoder_window.window.lift()
+
     def close(self):
         self.closed = True
+        if self.encoder_window is not None:
+            self.encoder_window.close()
         if self.poll_id is not None:
             self.root.after_cancel(self.poll_id)
         self.progress.stop()
@@ -314,6 +326,24 @@ if __name__ == '__main__':
         assert not application.busy
         assert application.transfer.assemble() == raw
         assert str(application.save_button['state']) == 'normal'
+        # Exercise the new file encoder from the packaged GUI as well.
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'encode-test.bin'
+            source.write_bytes(raw)
+            application.open_encoder()
+            view = application.encoder_window
+            view.window.withdraw()
+            view.start(source)
+            deadline = time.monotonic() + 15
+            while view.busy and time.monotonic() < deadline:
+                root.update()
+                time.sleep(.005)
+            assert not view.busy and view.payload
+            restored = Transfer()
+            restored.add(view.payload)
+            assert restored.assemble() == raw
+            assert len(view.preview.get('1.0', 'end-1c')) < 400
         root.update()
         application.close()
         Path(sys.argv[2]).write_text('PASS: bundled Tk UI and decoder\n', encoding='utf-8')
