@@ -6,7 +6,6 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
 
 /** Pure JVM protocol implementation. Caller owns and closes the stream. */
 public final class Transfer {
@@ -61,8 +60,8 @@ public final class Transfer {
     }
 
     private String encodeEnvelope(byte[] bytes, int part) {
-        String data = Base64.getEncoder().encodeToString(bytes);
-        return "{\"format\":\"base64-transfer-v2\",\"id\":\"" + sha256
+        String data = CompactText15.encode(bytes);
+        return "{\"format\":\"text-transfer-v3\",\"id\":\"" + sha256
                 + "\",\"name\":" + quote(name) + ",\"size\":" + size
                 + ",\"sha256\":\"" + sha256 + "\",\"part\":" + part
                 + ",\"parts\":" + parts + ",\"data\":\"" + data + "\"}";

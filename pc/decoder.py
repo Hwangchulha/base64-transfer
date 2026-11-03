@@ -4,7 +4,9 @@ import binascii
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
+from compact_text import decode_compact
 
 FORMAT = 'base64-transfer-v1'
 CHUNK_BYTES = 100 * 1024
@@ -50,7 +52,7 @@ def _validate(obj):
     for key in ('size', 'part', 'parts'):
         if type(obj[key]) is not int:  # bool is deliberately not accepted.
             raise DecodeError(key + ' must be an integer.')
-    if obj['format'] not in (FORMAT, 'base64-transfer-v2'):
+    if obj['format'] not in (FORMAT, 'base64-transfer-v2', 'text-transfer-v3'):
         raise DecodeError('Unsupported format.')
     if not HEX.fullmatch(obj['id']) or not HEX.fullmatch(obj['sha256']):
         raise DecodeError('id and sha256 must be full lowercase SHA-256 hex.')
@@ -62,20 +64,26 @@ def _validate(obj):
     size = obj['size']
     if not 0 <= size < MAX_FILE_BYTES:
         raise DecodeError('File size must be 0 through 1,048,575 bytes.')
-    single = obj['format'] == 'base64-transfer-v2'
+    single = obj['format'] != FORMAT
     parts = 1 if single else max(1, (size + CHUNK_BYTES - 1) // CHUNK_BYTES)
     if obj['parts'] != parts or not 1 <= obj['part'] <= parts:
         raise DecodeError('Invalid part count or part number for file size.')
     expected = size if single else CHUNK_BYTES if obj['part'] < parts else size - CHUNK_BYTES * (parts - 1)
     data = obj['data']
-    if len(data) != 4 * ((expected + 2) // 3):
-        raise DecodeError('Base64 length does not match this chunk.')
-    try:
-        raw = base64.b64decode(data, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise DecodeError('Malformed Base64.') from exc
-    if len(raw) != expected or base64.b64encode(raw).decode('ascii') != data:
-        raise DecodeError('Invalid chunk length or noncanonical padded Base64.')
+    if obj['format'] == 'text-transfer-v3':
+        try:
+            raw = decode_compact(unicodedata.normalize('NFC', data), expected)
+        except ValueError as exc:
+            raise DecodeError(str(exc)) from exc
+    else:
+        if len(data) != 4 * ((expected + 2) // 3):
+            raise DecodeError('Base64 length does not match this chunk.')
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise DecodeError('Malformed Base64.') from exc
+        if len(raw) != expected or base64.b64encode(raw).decode('ascii') != data:
+            raise DecodeError('Invalid chunk length or noncanonical padded Base64.')
     metadata = tuple(obj[k] for k in ('format', 'id', 'name', 'size', 'sha256', 'parts'))
     return Chunk(metadata, obj['part'], raw)
 
@@ -171,7 +179,7 @@ class Transfer:
     def status(self):
         if self._metadata is None:
             return '등록된 파일이 없습니다.'
-        if self._metadata[0] == 'base64-transfer-v2':
+        if self._metadata[0] != FORMAT:
             return '원본 크기와 SHA-256 검증 완료. 파일을 저장할 수 있습니다.'
         received = f'조각 {len(self._chunks)}/{self._metadata[5]}개 수신.'
         if self.missing:

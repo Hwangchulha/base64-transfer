@@ -10,13 +10,11 @@ import android.view.Gravity;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.content.ClipData;
-import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
-import android.os.PersistableBundle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -30,6 +28,9 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
     private TextView detail, fileMeta, status, stateTitle, partLabel;
     private Button pick, gmail, copy;
     private ProgressBar busyIndicator;
+    private static final int PARCEL_BUDGET = 800 * 1024;
+    private Transfer measuredTransfer;
+    private int clipboardBytes = -1;
 
     @Override public void onCreate(Bundle state) {
         setTheme(R.style.TransferTheme);
@@ -59,7 +60,7 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         mark.setImageResource(R.drawable.ic_transfer);
         mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         brand.addView(mark, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        TextView wordmark = text(brand, "BASE64 TRANSFER", 12, R.color.accent, true);
+        TextView wordmark = text(brand, "TEXT TRANSFER", 12, R.color.accent, true);
         wordmark.setLetterSpacing(0.14f);
         wordmark.setPadding(dp(12), 0, 0, 0);
         layout.addView(brand);
@@ -81,7 +82,7 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         space(fileCard, 20);
         pick = button(fileCard, "파일 선택하기", true, v -> chooseFile());
         space(fileCard, 12);
-        text(fileCard, "원본 파일 1 MiB 미만", 12, R.color.muted_text, false);
+        text(fileCard, "원본 1 MiB 미만 · 일반 클립보드 한도 800 KiB", 12, R.color.muted_text, false);
         space(layout, 16);
 
         LinearLayout sendCard = card(layout);
@@ -114,7 +115,7 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         space(layout, 16);
         button(layout, "전달 방법 안내", false, v -> new AlertDialog.Builder(this)
                 .setTitle("텍스트 전달 안내")
-                .setMessage("파일 전체를 하나의 텍스트로 변환합니다. 분할하거나 파일로 첨부하지 않습니다.\n\n작은 본문은 Gmail에 바로 넣습니다. 큰 본문은 클립보드에 준비한 뒤 제목만 있는 작성 화면을 엽니다. 본문을 길게 눌러 붙여넣기를 한 번 선택하세요.\n\n수신 앱이 텍스트 스트림을 지원해야 합니다. Gmail 실기기 동작은 아직 검증되지 않았습니다. 본문 대신 주소가 보이거나 붙여넣기가 되지 않으면 전송하지 마세요.\n\n직접 받는 사람을 입력하고 보내기를 눌러주세요. 클립보드는 PC와 자동 동기화되지 않습니다. Base64는 암호화가 아닙니다.")
+                .setMessage("파일 전체를 한자·한글 모양의 텍스트로 바꿉니다. PC에서 원본 바이트로 복원되며, 압축이나 암호화는 아닙니다.\n\n약 700 KB 파일은 앱의 일반 클립보드 용량 기준에 들어갑니다. 실제 복사 크기를 표시하며, 한도를 넘으면 나누거나 우회하지 않습니다.\n\n큰 본문은 한 번 복사한 뒤 Gmail 본문을 길게 눌러 붙여넣으세요. 받는 사람과 내용을 확인하고 직접 보내기를 눌러주세요.\n\n일반 텍스트 클립보드이므로 다른 앱에서 읽을 수 있습니다. 키보드 기록 표시 여부는 키보드 앱마다 다르며 보장하지 않습니다. 실제 키보드·Gmail 동작은 아직 검증하지 못했습니다.")
                 .setPositiveButton("확인", null).show());
         setContentView(scroll);
         changed();
@@ -202,8 +203,16 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         enabled(gmail, ready);
         enabled(copy, ready);
         detail.setText(ready ? Transfer.displayName(transfer.name) : worker.busy ? "잠시만 기다려주세요" : "어떤 파일을 보낼까요?");
+        if (ready && measuredTransfer != transfer) {
+            measuredTransfer = transfer;
+            try { clipboardBytes = parcelBytes(plainClip()); }
+            catch (RuntimeException failure) { clipboardBytes = -1; }
+        }
+        String budget = clipboardBytes < 0 ? "클립보드 크기 확인 불가"
+                : "클립보드 " + sizeLabel(clipboardBytes) + " / 800 KiB · "
+                + (clipboardBytes <= PARCEL_BUDGET ? "용량 기준 이내" : "복사 한도 초과");
         fileMeta.setText(ready ? java.text.NumberFormat.getIntegerInstance(java.util.Locale.KOREA).format(transfer.size)
-                + " 바이트 · 파일 전체" : "문서 · 사진 · 모든 파일 형식");
+                + " 바이트 · 파일 전체\n" + budget : "문서 · 사진 · 모든 파일 형식");
         partLabel.setText(ready ? "파일 전체 · 한 번에 전달"
                 : worker.busy ? "전달할 텍스트를 준비하고 있어요" : "파일을 선택하면 시작할 수 있어요");
         partLabel.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -238,24 +247,29 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
         if (worker.transfer == null || worker.busy) return;
         String body = worker.transfer.envelope(1);
         Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                .putExtra(Intent.EXTRA_SUBJECT, "Base64 Transfer — 파일 전체")
+                .putExtra(Intent.EXTRA_SUBJECT, "Text Transfer — 파일 전체")
                 .putExtra(Intent.EXTRA_TEXT, body);
         // Include possible framework EXTRA_TEXT -> ClipData duplication and chooser
         // nesting in the measurement, but do not duplicate the actual send Intent.
         Intent measured = new Intent(send).setPackage("com.google.android.gm");
         measured.setClipData(ClipData.newPlainText("파일 전체", body));
-        boolean manualPaste = parcelBytes(Intent.createChooser(measured, "본문 전달")) > 800 * 1024;
+        boolean manualPaste;
+        try { manualPaste = parcelBytes(Intent.createChooser(measured, "본문 전달")) > PARCEL_BUDGET; }
+        catch (RuntimeException failure) {
+            message("공유 크기를 확인하지 못했습니다 (" + failure.getClass().getSimpleName() + "). 전체 텍스트 복사를 시도하세요.");
+            return;
+        }
         if (manualPaste) {
-            if (!copyFullText(true)) return;
+            if (!copyFullText()) return;
             // Subject ONLY: no EXTRA_TEXT, EXTRA_STREAM, URI, or attachment.
             send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                    .putExtra(Intent.EXTRA_SUBJECT, "Base64 Transfer — 파일 전체");
+                    .putExtra(Intent.EXTRA_SUBJECT, "Text Transfer — 파일 전체");
         }
         if (manualPaste) {
             final Intent subjectOnly = send;
             new AlertDialog.Builder(this)
                     .setTitle("Gmail에서 한 번 붙여넣기")
-                    .setMessage("파일 전체를 클립보드에 준비했어요. 다음 Gmail 화면에서 본문을 길게 눌러 ‘붙여넣기’를 한 번 선택하세요. 제목만 열리며 본문은 자동 입력되지 않습니다.\n\n수신 앱의 텍스트 스트림 지원이 필요합니다. Gmail 실기기 동작은 아직 검증하지 못했습니다. 주소만 보이거나 붙여넣기가 되지 않으면 보내지 마세요.\n\n본문과 받는 사람을 확인한 뒤 직접 보내기를 눌러주세요.")
+                    .setMessage("파일 전체를 클립보드에 준비했어요. 다음 Gmail 화면에서 본문을 길게 눌러 ‘붙여넣기’를 한 번 선택하세요. 제목만 열리며 본문은 자동 입력되지 않습니다.\n\n전체 내용은 일반 텍스트로 복사했습니다. 한자·한글 모양이어도 PC에서 원본으로 복원됩니다. 실제 Gmail·키보드 동작은 아직 검증하지 못했습니다. 키보드 기록에 보이지 않으면 본문의 붙여넣기 메뉴를 사용해 보세요.\n\n본문과 받는 사람을 확인한 뒤 직접 보내기를 눌러주세요.")
                     .setPositiveButton("Gmail 열기", (dialog, which) -> launchCompose(subjectOnly, true))
                     .setNegativeButton("취소", null)
                     .show();
@@ -267,7 +281,7 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
     private void launchCompose(Intent send, boolean manualPaste) {
         send.setPackage("com.google.android.gm");
         String instruction = manualPaste
-                ? "전체 텍스트를 클립보드에 준비했습니다. 작성 화면에는 제목만 있습니다. 본문을 길게 눌러 붙여넣기를 한 번 선택하세요. 텍스트 스트림을 지원해야 하며 Gmail 실기기 동작은 미검증입니다. 내용을 확인한 뒤 직접 보내세요."
+                ? "전체 텍스트를 클립보드에 준비했습니다. 작성 화면에는 제목만 있습니다. 본문을 길게 눌러 붙여넣기를 한 번 선택하세요. 일반 텍스트로 복사했으며 Gmail 실기기 동작은 미검증입니다. 내용을 확인한 뒤 직접 보내세요."
                 : "Gmail에 전체 본문 작성을 요청했습니다. 받는 사람과 본문을 확인하고 직접 보내기를 눌러주세요. 전송 완료는 확인되지 않습니다.";
         try {
             startActivity(send);
@@ -276,48 +290,61 @@ public final class MainActivity extends Activity implements TransferWorker.Liste
             send.setPackage(null);
             try {
                 startActivity(Intent.createChooser(send, "본문 전달"));
-                message(manualPaste ? "Gmail을 열지 못했습니다. 다른 앱을 선택한 뒤 본문을 길게 눌러 붙여넣으세요. 제목만 전달되며 텍스트 스트림을 지원하는 앱이 필요합니다."
+                message(manualPaste ? "Gmail을 열지 못했습니다. 다른 앱을 선택한 뒤 본문을 길게 눌러 붙여넣으세요. 제목만 전달됩니다. 전체 본문을 직접 붙여넣으세요."
                         : "Gmail을 열지 못했습니다. 다른 앱에서 전체 본문을 확인하고 직접 보내세요.");
             } catch (RuntimeException shareFailure) {
-                message(manualPaste ? "작성 화면을 열지 못했습니다. 전체 텍스트는 클립보드에 있습니다. 텍스트 스트림을 지원하는 앱을 직접 열어 붙여넣으세요."
-                        : "공유 앱을 열지 못했습니다. 전체 텍스트 복사를 시도하세요. 기기에 따라 공유가 실패할 수 있습니다.");
+                message((manualPaste ? "작성 화면을 열지 못했습니다. 전체 텍스트는 클립보드에 있습니다. 메일 앱을 직접 열어 본문에 붙여넣으세요."
+                        : "공유 앱을 열지 못했습니다. 전체 텍스트 복사를 시도하세요. 기기에 따라 공유가 실패할 수 있습니다.")
+                        + " (" + shareFailure.getClass().getSimpleName() + ")");
             }
         }
     }
 
-    private void copy() { copyFullText(false); }
+    private void copy() { copyFullText(); }
 
-    private static void sensitive(ClipData clip) {
-        PersistableBundle extras = new PersistableBundle();
-        extras.putBoolean(Build.VERSION.SDK_INT >= 33 ? ClipDescription.EXTRA_IS_SENSITIVE
-                : "android.content.extra.IS_SENSITIVE", true);
-        clip.getDescription().setExtras(extras);
+    private static String sizeLabel(int bytes) {
+        return String.format(java.util.Locale.KOREA, "%,d 바이트 (%.1f KiB)", bytes, bytes / 1024.0);
     }
 
-    private boolean copyFullText(boolean forceStream) {
+    private ClipData plainClip() {
+        // Ordinary plain text, deliberately not marked sensitive: preview/history
+        // behavior is still up to Android and the user's keyboard application.
+        return ClipData.newPlainText("파일 전체", worker.transfer.envelope(1));
+    }
+
+    private boolean copyFullText() {
         if (worker.transfer == null || worker.busy) return false;
+        ClipboardManager clipboard;
+        String body = worker.transfer.envelope(1);
         try {
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             if (clipboard == null) throw new IllegalStateException();
-            ClipData clip = ClipData.newPlainText("파일 전체", worker.transfer.envelope(1));
-            sensitive(clip);
-            boolean streamed = forceStream || parcelBytes(clip) > 400 * 1024;
-            if (streamed) {
-                if (worker.clipboardUri == null || getContentResolver().getStreamTypes(worker.clipboardUri, "text/plain") == null) {
-                    message("큰 본문용 클립보드가 만료되었거나 준비되지 않았습니다. 파일을 다시 선택해주세요.");
-                    return false;
-                }
-                clip = ClipData.newUri(getContentResolver(), "파일 전체 텍스트", worker.clipboardUri);
-                sensitive(clip);
+            ClipData clip = plainClip();
+            int measured = parcelBytes(clip);
+            if (measured > PARCEL_BUDGET) {
+                message("복사 한도 초과: " + sizeLabel(measured) + " / 800 KiB. 더 작은 원본 파일을 선택해주세요. 복사하거나 분할하지 않았습니다.");
+                return false;
             }
             clipboard.setPrimaryClip(clip);
-            message(streamed
-                    ? "파일 전체를 스트림 클립보드에 준비했습니다. 메일 본문을 길게 눌러 한 번 붙여넣으세요. 수신 앱의 텍스트 스트림 지원이 필요하며 Gmail 실기기 동작은 미검증입니다. 주소만 보이거나 붙여넣기가 안 되면 전송하지 마세요."
-                    : "파일 전체를 한 번 복사했습니다. 메일 본문에 붙여넣어 PC로 보내주세요. 복사만으로 PC에 전달되지는 않습니다.");
-            return true;
         } catch (RuntimeException failure) {
-            message("전체 텍스트를 복사하지 못했습니다. 기기나 수신 앱에 따라 큰 본문 붙여넣기가 제한될 수 있습니다. 자동으로 나누어 보내지는 않습니다.");
+            message("복사 요청 실패 (" + failure.getClass().getSimpleName()
+                    + "). 용량 기준 이내라도 Android 공유 버퍼나 기기 정책으로 실패할 수 있습니다.");
             return false;
         }
+        // Read back actual plain text, never coerce a URI or infer success from set().
+        try {
+            ClipData stored = clipboard.getPrimaryClip();
+            CharSequence text = stored != null && stored.getItemCount() > 0 ? stored.getItemAt(0).getText() : null;
+            if (text == null || !body.contentEquals(text)) {
+                message("복사를 요청했으나 전체 텍스트가 저장되었는지 확인하지 못했습니다. 실제 붙여넣기 결과를 확인해주세요.");
+                return false;
+            }
+        } catch (RuntimeException failure) {
+            message("복사를 요청했으나 확인하지 못했습니다 (" + failure.getClass().getSimpleName()
+                    + "). 실제 붙여넣기 결과를 확인해주세요.");
+            return false;
+        }
+        message("파일 전체가 일반 텍스트로 복사된 것을 확인했습니다. 메일 본문에 한 번 붙여넣으세요. 키보드 기록 표시는 키보드 앱마다 다릅니다.");
+        return true;
     }
 }

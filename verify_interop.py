@@ -33,8 +33,9 @@ def main():
         source.write_text(JAVA_SOURCE, encoding='utf-8')
         subprocess.run([str(JDK / 'javac'), '-encoding', 'UTF-8', '-d', folder,
                         str(ROOT / 'android/app/src/main/java/app/base64transfer/Transfer.java'),
+                        str(ROOT / 'android/app/src/main/java/app/base64transfer/CompactText15.java'),
                         str(source)], check=True)
-        sizes = [0, 1, 2, 3, CHUNK_BYTES-1, CHUNK_BYTES, CHUNK_BYTES+1, MAX_FILE_BYTES-1]
+        sizes = [0, 1, 2, 3, CHUNK_BYTES-1, CHUNK_BYTES, CHUNK_BYTES+1, 700000, 716800, MAX_FILE_BYTES-1]
         for size in sizes:
             data = bytes(range(256)) * (size // 256) + bytes(range(size % 256))
             input_path = temp / 'input.bin'
@@ -44,7 +45,10 @@ def main():
             transfer = Transfer()
             lines = output.splitlines()
             assert len(lines) == 1, 'A file must not be split'
-            assert json.loads(lines[0])['format'] == 'base64-transfer-v2'
+            assert json.loads(lines[0])['format'] == 'text-transfer-v3'
+            if size == 716800:
+                assert len(lines[0].encode('utf-16-le')) < 800 * 1024
+                print('700KiB UTF16 payload bytes:', len(lines[0].encode('utf-16-le')))
             for line in lines:
                 transfer.add(line)
             assert transfer.add(lines[0]) == 0, 'Duplicate was not ignored'

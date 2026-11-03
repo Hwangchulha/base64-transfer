@@ -33,3 +33,8 @@ Validation: Windows GUI tests cover full-file recovery from bounded preview,
 failed new input, disabled stale Save, close during validation, and submission
 failure. Existing decoder tests retain v1/v2 coverage. Packaged EXE self-test
 runs the real UI input/validation path and verifies recovered bytes.
+
+1.3 Unicode follow-up: first4,096 source chars caused2.27s render with
+700KiB random compact text on the same Windows PC. Reducing the preview to
+256 source chars reduced paste+render to0.067s; background verify0.172s.
+Full input382,549 chars (765,098 UTF16 bytes) preserved; restored bytes match.

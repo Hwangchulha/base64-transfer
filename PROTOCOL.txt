@@ -1,24 +1,28 @@
-Base64 Transfer v2
+Text Transfer v3 — CompactText15
 
-Original file: 0 <= size < 1,048,576 bytes (1 MiB).
-No splitting. Each file is exactly one JSON envelope:
-{"format":"base64-transfer-v2","id":"<full lowercase SHA256>","name":"original.ext","size":123,"sha256":"<full lowercase SHA256>","part":1,"parts":1,"data":"<whole file standard padded Base64>"}
+No splitting. Same eight JSON fields, format=text-transfer-v3, part=parts=1.
+size is original byte count (0 <= size < 1,048,576), id=sha256 full lowercase
+SHA256 of original bytes, name is original filename.
 
-Decode the entire data field; verify original byte size and SHA256 before save.
-The PC decoder also accepts legacy v1 independently encoded 100 KiB chunks.
-Mixing v1 and v2 or files in the same transfer is rejected.
+Data alphabet (exactly 32768 printable BMP symbols):
+  index     0.. 6581 -> U+3400..U+4DB5
+  index  6582..27483 -> U+4E00..U+9FA5
+  index 27484..32767 -> U+AC00..U+C0A3
+Pack raw bytes in big-endian bit order, 15 bits per symbol. Final symbol pads
+unused LOW bits with zero. Symbol count must be ceil(size*8/15). Decoder checks
+padding, exact size, and SHA256. NFC is applied to v3 data before decoding to
+handle decomposed Hangul. NFC/NFKC leave the canonical alphabet unchanged.
+This is reversible encoding, not encryption or content compression.
 
-Android small payloads can be shared directly to Gmail body using Intent.
-Large payloads: copy text using a read-only content URI backed by an app-owned
-UTF-8 text stream, then launch Gmail WITHOUT body or attachments. The user
-pastes once into the body. Clipboard text coercion support in the receiving
-app is required. Actual Gmail device compatibility is NOT yet verified.
-No OAuth account setup, network API, attachment, or automatic split is used.
+Android copies the whole JSON using newPlainText, never a content URI.
+App policy checks actual ClipData Parcel <=819200 bytes (800KiB), then writes
+clipboard and reads it back as plain text before reporting confirmed success.
+700KiB input produces about765KB UTF16 JSON before small Parcel overhead;
+near1MiB input does NOT fit this policy. No claim of guaranteed Android maximum:
+shared Binder buffer, keyboard policies and device conditions still apply.
+Small email Intents include the body; large ones first copy normal text then
+open a subject-only composer after user guidance. The user pastes once.
+No attachments, OAuth, network permission, clipboard URI or automatic split.
 
-Clipboard copy alone does not transmit text to a PC. Mail sending remains
-explicit in Gmail. SHA256 detects corruption, not sender authenticity;
-Base64 is not encryption.
-
-Android documentation:
-https://developer.android.com/develop/ui/views/touch-and-input/copy-paste
-https://developer.android.com/reference/android/os/TransactionTooLargeException
+PC reads v1/v2 legacy Base64 and v3 CompactText15. Formats may not be mixed in
+one transfer. Update both APK and EXE; older EXE versions do not support v3.

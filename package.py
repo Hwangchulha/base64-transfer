@@ -6,6 +6,7 @@ import shutil
 root = Path(__file__).resolve().parent
 apk = root / 'android/app/build/outputs/apk/debug/app-debug.apk'
 required = ['START-HERE.txt', 'PROTOCOL.txt', 'pc/app.py', 'pc/decoder.py',
+            'pc/compact_text.py', 'pc/test_compact.py',
             'pc/launch.cmd', 'pc/README.txt', 'pc/test_decoder.py',
             'pc/check_vectors.py', 'pc/build_windows.py', 'pc/test_gui.py', 'android/README.txt']
 for name in required:

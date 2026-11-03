@@ -16,11 +16,22 @@ public final class ProtocolTest {
         if (args.length > 0 && args[0].equals("vectors")) {
             int size = args.length > 1 ? Integer.parseInt(args[1]) : 102401;
             if (size < 0 || size > Transfer.LIMIT_BYTES) throw new IllegalArgumentException("Invalid test size");
-            Transfer transfer = Transfer.read(new ByteArrayInputStream(payload(size)), "vector-" + size + ".bin");
+            boolean random = args.length > 2 && args[2].equals("random");
+            byte[] input = payload(size);
+            if (random) {
+                int state = 0x15c0de;
+                for (int i = 0; i < size; i++) {
+                    state ^= state << 13;
+                    state ^= state >>> 17;
+                    state ^= state << 5;
+                    input[i] = (byte) state;
+                }
+            }
+            Transfer transfer = Transfer.read(new ByteArrayInputStream(input), (random ? "random-vector-" : "vector-") + size + ".bin");
             for (int p = 1; p <= transfer.parts; p++) System.out.println(transfer.envelope(p));
             return;
         }
-        for (int size : new int[]{0, 1, 2, 3, 102399, 102400, 102401, 1048575}) {
+        for (int size : new int[]{0, 1, 2, 3, 102399, 102400, 102401, 700000, 716800, 1048575}) {
             byte[] raw = payload(size);
             // Provider can return short reads and report misleading available().
             InputStream shortReads = new ByteArrayInputStream(raw) {
@@ -33,15 +44,16 @@ public final class ProtocolTest {
             for (int p = 1; p <= t.parts; p++) {
                 String json = t.envelope(p);
                 String encoded = json.substring(json.indexOf("\"data\":\"") + 8, json.length() - 2);
-                byte[] chunk = java.util.Base64.getDecoder().decode(encoded);
+                byte[] chunk = CompactText15Test.decode(encoded, size);
                 check(chunk.length == size, "full single payload");
-                check(json.startsWith("{\"format\":\"base64-transfer-v2\""), "v2 format");
+                check(json.startsWith("{\"format\":\"text-transfer-v3\""), "v3 format");
                 joined.write(chunk);
             }
             check(Arrays.equals(raw, joined.toByteArray()), "roundtrip " + size);
             try { t.envelope(0); throw new AssertionError("part zero accepted"); } catch (IllegalArgumentException expected) { }
             try { t.envelope(t.parts + 1); throw new AssertionError("excess part accepted"); } catch (IllegalArgumentException expected) { }
         }
+        CompactText15Test.run();
         final int[] consumed = {0};
         InputStream endless = new InputStream() {
             @Override public int read() { consumed[0]++; return 7; }

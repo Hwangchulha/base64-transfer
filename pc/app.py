@@ -154,13 +154,13 @@ class App:
         if not isinstance(value, str) or len(value) > MAX_TEXT_CHARS:
             raise DecodeError('본문이 너무 큽니다. 2,097,152자 이하의 텍스트를 가져와 주세요.')
         self.input_text = value
-        sample = value[:4096]
+        sample = value[:256]
         # Hard-wrap the preview so even an unbroken Base64 string is cheap to draw.
         lines = []
         for line in sample.splitlines():
             lines.extend(line[i:i + 72] for i in range(0, len(line), 72))
         preview = '\n'.join(lines)
-        if len(value) > 4096:
+        if len(value) > 256:
             preview += '\n\n… 미리보기만 줄였습니다. 원본 본문은 모두 보관하고 있어요.'
         self.text.configure(state='normal')
         self.text.delete('1.0', 'end')
@@ -286,16 +286,19 @@ if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--self-test-report':
         # Exercises bundled Tk and the real decoder in the packaged executable.
         import hashlib
-        import base64
         import json
         from pathlib import Path
         root.withdraw()
-        raw = bytes(range(256)) * 1400
+        raw = b'\xff' * (700 * 1024)
+        full_symbols, trailing_bits = divmod(len(raw) * 8, 15)
+        last_index = ((1 << trailing_bits) - 1) << (15 - trailing_bits)
+        # Known all-ones fixture: full symbols are the last alphabet character.
+        encoded = chr(0xC0A3) * full_symbols + chr(0xAC00 + last_index - 27484)
         digest = hashlib.sha256(raw).hexdigest()
         assert str(application.save_button['state']) == 'disabled'
-        application.set_input(json.dumps(dict(format='base64-transfer-v2',
+        application.set_input(json.dumps(dict(format='text-transfer-v3',
             id=digest, name='한번에.bin', size=len(raw), sha256=digest, part=1, parts=1,
-            data=base64.b64encode(raw).decode('ascii'))))
+            data=encoded), ensure_ascii=False))
         assert len(application.text.get('1.0', 'end-1c')) < 5000
         application.add()
         import time
